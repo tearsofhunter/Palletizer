@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arch Pallet Pack 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Single theme: graphite shop-floor viewport, instrument-panel side rail. Layout: control rail left, 3D stage right. */
+  --bg:#121518; --panel:#1a1e22; --raise:#22272c; --line:#30363d; --ink:#e8ebee; --muted:#98a2ab; --accent:#f2b33d;
+  --good:#5cc98a; --bad:#ff8f84;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45}
+.app{display:grid;grid-template-columns:350px 1fr;height:100%}
+aside{overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:16px 14px 28px;display:flex;flex-direction:column;gap:14px}
+h1{font-family:var(--display);font-weight:600;font-size:22px;margin:0;text-wrap:balance}
+.sub{color:var(--muted);margin:4px 0 0;font-size:13px}
+.label{font-family:var(--display);font-weight:500;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.card{background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:12px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
+.btn,.seg button,.chips button,.pal{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;cursor:pointer;text-align:left}
+.seg button{padding:7px 9px}
+.seg button b{display:block;font-family:var(--display);font-weight:600;font-size:15px}
+.seg button span{color:var(--muted);font-size:12px}
+.btn{padding:6px 10px;text-align:center}
+.btn.primary{background:var(--accent);color:#1a1405;border-color:var(--accent);font-weight:600}
+[aria-pressed="true"]{border-color:var(--accent)!important;box-shadow:inset 0 0 0 1px var(--accent)}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pals{display:flex;flex-direction:column;gap:6px}
+.pal{padding:8px 10px;display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:baseline;background:var(--raise)}
+.pal .n{font-family:var(--display);font-weight:600;font-size:14px}
+.pal .h{font-family:var(--mono);font-size:12px}
+.pal .d{grid-column:1/-1;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.tall{color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{padding:5px 9px;display:inline-flex;align-items:center;gap:6px;background:var(--raise)}
+.sw{width:10px;height:10px;border-radius:2px;display:inline-block;flex:none}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:5px 0}
+input[type=range]{accent-color:var(--accent)}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+select,input[type=number],input[type=text]{font:inherit;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+input[type=number]{width:74px;font-family:var(--mono);font-size:13px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.tiles div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 7px}
+.tiles b{display:block;font-family:var(--mono);font-size:14px;font-weight:500}
+.tiles span{color:var(--muted);font-size:11px;line-height:1.2;display:block}
+.checks{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.checks li{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start}
+.pill{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:999px;border:1px solid;white-space:nowrap}
+.ok{color:var(--good);border-color:#2d5a40} .no{color:var(--bad);border-color:#5a2f2c} .warnc{color:var(--accent);border-color:#5a4a22}
+.bar{height:8px;border-radius:999px;background:var(--panel);border:1px solid var(--line);overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--good)}
+.dims{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;font-size:13px;margin-top:8px}
+.dims label{color:var(--muted)}
+details>summary{cursor:pointer;color:var(--ink);font-family:var(--display);font-weight:500;font-size:14px;list-style:none}
+details>summary::before{content:"▸ ";color:var(--muted)} details[open]>summary::before{content:"▾ "}
+.card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:8px 0 0;font-size:13px}
+.card dt{color:var(--muted)} .card dd{margin:0;font-variant-numeric:tabular-nums}
+.sel-title{font-family:var(--display);font-weight:600;font-size:17px}
+.hint{color:var(--muted);font-size:12px}
+.msg{font-size:12px;margin-top:6px}
+.note{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+.stepbar{display:flex;gap:6px;align-items:center;margin-top:6px}
+.stepbar input{flex:1}
+#stepText{font-size:13px;margin-top:6px;min-height:2.6em}
+#stage{position:relative;min-height:0;min-width:0}
+#stage canvas{display:block;width:100%;height:100%}
+#tip{position:absolute;pointer-events:none;background:rgba(18,21,24,.94);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12px;max-width:260px;display:none}
+#tip b{font-family:var(--display);font-size:14px}
+.legend-float{position:absolute;left:12px;bottom:12px;background:rgba(26,30,34,.9);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px 12px;max-width:calc(100% - 24px)}
+.legend-float span{display:inline-flex;align-items:center;gap:6px}
+.top-hint{position:absolute;right:12px;top:10px;font-size:12px;color:var(--muted);background:rgba(26,30,34,.85);padding:5px 9px;border-radius:6px}
+#modal{position:absolute;inset:0;background:rgba(10,12,14,.72);display:none;align-items:center;justify-content:center;padding:20px;z-index:5}
+#modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(980px,100%);max-height:100%;display:flex;flex-direction:column}
+#modal header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+#modal h2{font-family:var(--display);font-size:18px;margin:0}
+#modal .scroll{overflow:auto;padding:0 14px 14px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:500}
+@media (max-width:760px){
+  .app{grid-template-columns:1fr;grid-template-rows:56% 44%}
+  aside{order:2;border-right:0;border-top:1px solid var(--line)}
+}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div>
+    <h1>Arch pallet pack</h1>
+    <p class="sub">30 aluminum arches as 116 bolt-together sections plus 24 bottom bars. Pack them on LTL pallets or in a rental or box truck.</p>
+  </div>
+
+  <div class="seg" role="group" aria-label="Shipping mode">
+    <button id="modeP" aria-pressed="true"><b>Pallets</b><span>LTL freight</span></button>
+    <button id="modeT" aria-pressed="false"><b>Truck</b><span>U-Haul or box truck</span></button>
+  </div>
+
+  <section class="card">
+    <p class="label" style="margin-bottom:4px">Velcro clearance</p>
+    <div class="row"><label for="clear">Space on each side of a piece</label><output id="clearOut" class="mono" for="clear">⅛"</output></div>
+    <input id="clear" type="range" min="0" max="1" step="0.0625" value="0.125" style="width:100%">
+    <p class="label" style="margin:10px 0 6px">Comb teeth between slots</p>
+    <div class="seg" role="group" aria-label="Comb teeth">
+      <button id="toothT" aria-pressed="true"><b>⅜" UHMW</b><span>tight</span></button>
+      <button id="toothS" aria-pressed="false"><b>½" plywood</b><span>standard</span></button>
+    </div>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section id="palletPanel">
+    <p class="label">Pallets · click to zoom</p>
+    <div class="pals" id="pals"></div>
+  </section>
+
+  <section id="truckPanel" class="card" hidden>
+    <p class="label">Vehicle</p>
+    <select id="vehicle" style="width:100%"></select>
+    <ul class="checks" id="truckChecks"></ul>
+    <details style="margin-top:10px" id="dimDetails">
+      <summary>Edit truck dimensions</summary>
+      <div class="dims" id="dims"></div>
+      <p class="hint" style="margin:8px 0 0">U-Haul sizes are from U-Haul's published specs. The 26' deck height and all wheel-well sizes are estimates; measure your truck and edit them here.</p>
+    </details>
+  </section>
+
+  <section class="card">
+    <p class="label">Load sequence</p>
+    <div class="row"><label for="prio">Unload first (load last)</label>
+      <select id="prio"><option value="">No preference</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></div>
+    <div class="stepbar">
+      <button class="btn" id="stepPrev" aria-label="Previous step">◀</button>
+      <button class="btn" id="stepPlay" style="min-width:64px">Play</button>
+      <button class="btn" id="stepNext" aria-label="Next step">▶</button>
+      <input id="step" type="range" min="0" max="1" value="1" aria-label="Loading step">
+    </div>
+    <div id="stepText" class="hint">Showing the finished load. Drag the slider or press Play to watch it load piece by piece.</div>
+  </section>
+
+  <section>
+    <p class="label">Highlight an arch</p>
+    <div class="chips" id="arches"></div>
+  </section>
+
+  <section class="card" id="selcard">
+    <div class="sel-title" id="selTitle">Click any piece</div>
+    <div class="hint" id="selHint">Hover to identify a section; click to pin its details and move it.</div>
+    <dl id="selDl" hidden></dl>
+    <div id="moveBox" hidden style="margin-top:10px">
+      <p class="label" style="margin-bottom:6px">Move this piece</p>
+      <div class="row" style="justify-content:flex-start;gap:6px;flex-wrap:wrap">
+        <select id="moveBay"></select>
+        <label for="moveSlot" class="hint">slot</label><input id="moveSlot" type="number" min="1" value="1">
+        <button class="btn primary" id="moveGo">Move</button>
+      </div>
+      <div class="msg" id="moveMsg"></div>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="hint" id="movesCount">No manual moves</span><button class="btn" id="movesReset">Undo moves</button></div>
+  </section>
+
+  <div class="seg">
+    <button class="btn" id="openList">Packing list</button>
+    <button class="btn" id="openWeights">Weight &amp; balance</button>
+  </div>
+
+  <details class="card">
+    <summary>Cost comparison</summary>
+    <div class="dims">
+      <label for="costPallet">LTL quote per pallet ($)</label><input id="costPallet" type="number" min="0" step="10" placeholder="e.g. 450">
+      <label for="costRack">Rack build per pallet ($)</label><input id="costRack" type="number" min="0" step="10" placeholder="e.g. 250">
+      <label for="costTruck">Truck rental, all-in ($)</label><input id="costTruck" type="number" min="0" step="10" placeholder="e.g. 900">
+      <label for="costTruckRack">In-truck racks ($)</label><input id="costTruckRack" type="number" min="0" step="10" placeholder="e.g. 400">
+    </div>
+    <div id="costOut" class="msg hint">Enter your quotes to compare. Pallet count comes from the current pallet plan.</div>
+  </details>
+
+  <details class="card">
+    <summary>View options</summary>
+    <div class="row"><label for="spread">Spread slots apart</label><input id="spread" type="range" min="1" max="5" step="0.25" value="1" style="width:140px"></div>
+    <div class="row"><label for="rack">Rack, pallet and truck body</label><input id="rack" type="checkbox" checked></div>
+    <div class="row"><label for="sup">Ribs, foam and spacers</label><input id="sup" type="checkbox" checked></div>
+    <div class="row"><label for="velc">Velcro clearance layer</label><input id="velc" type="checkbox" checked></div>
+    <div class="row"><label for="limit">7'-6" line on pallets</label><input id="limit" type="checkbox" checked></div>
+    <div class="row"><label for="colorby">Color by</label><select id="colorby"><option value="arch">Arch (A–E)</option><option value="sec">Section type</option></select></div>
+  </details>
+
+  <p class="note">Section shapes, sizes and weights come from your Rhino file (aluminum only, 0.125" wall tube). Racks, ribs, foam and pallets are schematic. Drag to orbit, right-drag to pan, scroll to zoom.</p>
+</aside>
+<div id="stage">
+  <div id="tip"></div>
+  <div class="top-hint" id="topHint">Drag to orbit · scroll to zoom</div>
+  <div class="legend-float" id="legend"></div>
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="box">
+      <header><h2 id="modalTitle">Packing list</h2><div style="display:flex;gap:6px"><button class="btn" id="modalCopy">Copy for spreadsheet</button><button class="btn" id="modalClose">Close</button></div></header>
+      <div class="hint" id="modalSub" style="padding:8px 14px 0"></div>
+      <div class="scroll" id="modalBody"></div>
+    </div>
+  </div>
+</div>
+</div>

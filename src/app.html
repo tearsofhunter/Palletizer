@@ -1,0 +1,692 @@
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const TY = DATA.types, COUNTS = DATA.counts;
+const $ = id => document.getElementById(id);
+const stage = $('stage'), tip = $('tip');
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---------------- constants ----------------
+const ARCH_COL = { A:'#5aa9ff', B:'#3fcf9e', C:'#b691ff', D:'#ff8a5b', E:'#f2c94c' };
+const SEC_COL = { leg:'#4a8fd6', lower:'#5cb85c', upper:'#f0883e', half:'#b691ff', bar:'#e5534b' };
+const SEC_NAME = { leg:'Straight leg', lower:'Lower curve', upper:'Upper curve / to apex', half:'D half-arch', bar:'Bottom-bar bundle' };
+const QTY = { A:2, B:2, C:2, D:8, E:16 };
+const SPACER = 1.75;                 // fixed spacer block between pieces sharing a slot
+const PAL = { W:48, D:40, POST:1.5, RACK_IN:45, DEPTH_IN:37, STD_CLEAR:82 };
+const VEHICLES = {
+  uh10:  { name:"U-Haul 10' truck",  L:118, W:75, H:73, insideL:119, doorW:71, doorH:67, deckH:29, ramp:0,  maxLoad:2850,  wells:true,  atticH:0,  liftgate:false },
+  uh15:  { name:"U-Haul 15' truck",  L:149, W:92, H:86, insideL:180, doorW:87, doorH:77, deckH:33, ramp:26, maxLoad:6385,  wells:true,  atticH:31, liftgate:false },
+  uh20:  { name:"U-Haul 20' truck",  L:202, W:92, H:85, insideL:233, doorW:87, doorH:77, deckH:35, ramp:26, maxLoad:5700,  wells:false, atticH:31, liftgate:false },
+  uh26:  { name:"U-Haul 26' truck",  L:281, W:98, H:99, insideL:314, doorW:93, doorH:82, deckH:40, ramp:31, maxLoad:12859, wells:false, atticH:39, liftgate:false },
+  box26: { name:"Box truck (enter your own numbers)", L:312, W:96, H:96, insideL:312, doorW:90, doorH:86, deckH:48, ramp:0, maxLoad:10000, wells:false, atticH:0, liftgate:true }
+};
+const DIM_FIELDS = [
+  ['L','Floor (deck) length'],['W','Inside width'],['H','Inside height'],['doorW','Door width'],['doorH','Door height'],
+  ['deckH','Deck height from ground'],['maxLoad','Max load (lb)'],['ramp','Ramp width (0 = none)'],
+  ['wellL','Wheel-well length'],['wellW','Wheel-well width'],['wellH','Wheel-well height'],['wellX','Wheel-well center from front']
+];
+function vehDefaults(key){ const v = Object.assign({}, VEHICLES[key]); Object.assign(v, { wellL:36, wellW:9, wellH:10, wellX:Math.round(v.L*0.62) }); return v; }
+
+const state = { mode:'P', tooth:0.375, clear:0.125, spread:1, rack:true, sup:true, velc:true, limit:true, color:'arch', arch:'all',
+  sel:null, vehicle:'uh26', veh:vehDefaults('uh26'), prio:'', step:null, moves:{ P:{}, T:{} } };
+
+function secKind(t){ if(t.startsWith('BB')) return 'bar'; if(t==='D1') return 'half'; if(t==='E2') return 'upper'; return {1:'leg',2:'lower',3:'upper'}[t[1]]; }
+function archOf(t){ return t.startsWith('BB') ? t.slice(3) : t[0]; }
+const ITEMS = []; Object.entries(COUNTS).forEach(([t,n]) => { for(let i=1;i<=n;i++) ITEMS.push({ uid:`${t}#${i}`, type:t, n:i }); });
+
+// ---------------- formatting ----------------
+function frac(v){
+  const n = Math.round(v*16), whole = Math.floor(n/16), r = n % 16;
+  if(!r) return `${whole}"`;
+  let num = r, den = 16; while(num % 2 === 0){ num/=2; den/=2; }
+  const f = ({ '1/2':'½','1/4':'¼','3/4':'¾','1/8':'⅛','3/8':'⅜','5/8':'⅝','7/8':'⅞' })[`${num}/${den}`] || `-${num}/${den}`;
+  return whole ? `${whole}${f}"` : `${f.replace('-','')}"`;
+}
+function ftin(v){ const ft = Math.floor(Math.round(v*16)/16/12); return `${ft}'-${frac(v - ft*12)}`; }
+const lb = v => `${Math.round(v).toLocaleString()} lb`;
+
+// ---------------- orientation of a section in its slot plane ----------------
+// Each section stands upright in its own slot. We spin it in its plane to the angle that uses the least
+// length along the slot while staying under the slot's clear height.
+const oCache = new Map();
+function orient(type, H){
+  const key = type + '|' + H.toFixed(3); if(oCache.has(key)) return oCache.get(key);
+  const t = TY[type]; let r;
+  if(t.bar){ r = { a:0, w:3, h:t.len, ox:1.5, oy:t.len/2, ok: t.len <= H }; }
+  else {
+    let best = null, low = null;
+    for(let a=0; a<180; a+=0.5){
+      const c = Math.cos(a*Math.PI/180), s = Math.sin(a*Math.PI/180);
+      let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+      for(const [px,py] of t.hull){ const x = px*c - py*s, y = px*s + py*c; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+      const o = { a, w:x1-x0, h:y1-y0, ox:-x0, oy:-y0 };
+      if(o.h <= H && (!best || o.w < best.w - 1e-6)) best = o;
+      if(!low || o.h < low.h) low = o;
+    }
+    r = best ? Object.assign(best, { ok:true }) : Object.assign(low, { ok:false });
+  }
+  oCache.set(key, r); return r;
+}
+function xform(type, o){ // rotated + offset outline points for each piece of a section
+  const c = Math.cos(o.a*Math.PI/180), s = Math.sin(o.a*Math.PI/180);
+  return TY[type].pieces.map(pc => ({ k:pc.k, p:pc.p.map(([x,y]) => [x*c - y*s + o.ox, x*s + y*c + o.oy]) }));
+}
+
+// ---------------- packing ----------------
+function slotGeom(){ const c = state.clear, slotw = 1 + 2*c, pitch = slotw + state.tooth; return { c, slotw, pitch, gap: SPACER + 2*c }; }
+function itemW(type, bay){ return orient(type, bay.clearH).w; }
+function tryPlace(bay, si, it, rear){
+  const slot = bay.slots[si]; if(!slot) return false;
+  const w = itemW(it.type, bay), g = bay.geom.gap;
+  if(!orient(it.type, bay.clearH).ok) return false;
+  for(const seg of slot.segs){
+    if(!rear){
+      const x = seg.front + (seg.nf ? g : 0);
+      if(x + w <= seg.rear - (seg.nr ? g : 0) + 1e-6){ seg.front = x + w; seg.nf++; slot.items.push({ ...it, x, w }); return true; }
+    } else {
+      const x = seg.rear - (seg.nr ? g : 0) - w;
+      if(x >= seg.front + (seg.nf ? g : 0) - 1e-6){ seg.rear = x; seg.nr++; slot.items.push({ ...it, x, w }); return true; }
+    }
+  }
+  return false;
+}
+function firstFit(bays, it, filter, rear){
+  for(let b=0;b<bays.length;b++){ if(filter && !filter(bays[b])) continue;
+    const order = bays[b].order || bays[b].slots.map((_,i)=>i);
+    for(const s of order) if(tryPlace(bays[b], s, it, rear)) return true; }
+  return false;
+}
+function tallClearFor(cap){
+  for(let H=PAL.STD_CLEAR; H<=110; H+=0.25){ if(orient('E2', H).w <= cap) return H; }
+  return 110;
+}
+function newPallet(tall, G){
+  const cap = PAL.RACK_IN - 2*G.c;
+  const clearH = tall ? tallClearFor(cap) : PAL.STD_CLEAR;
+  const maxslots = Math.max(1, Math.floor((PAL.DEPTH_IN - G.slotw)/G.pitch) + 1);
+  const x0 = PAL.POST + G.c, x1 = PAL.W - PAL.POST - G.c;
+  const slots = Array.from({ length:maxslots }, () => ({ items:[], segs:[{ front:x0, rear:x1, nf:0, nr:0 }] }));
+  const deckH = tall ? 4 : 5.5, railT = tall ? 1 : 1.5;
+  const top = deckH + 0.75 + clearH + 0.25 + railT;
+  return { kind:'pallet', tall, clearH, slots, maxslots, geom:G, cap, deckH, railT, top, len:PAL.W, depth:PAL.D };
+}
+function orderOthers(list){
+  const groups = [['A','B','C','BB'], ['D','E']];
+  const rank = it => { const a = archOf(it.type); return a === state.prio ? 2 : (groups[0].includes(a) || it.type.startsWith('BB') ? 0 : 1); };
+  return list.slice().sort((p,q) => rank(p) - rank(q) || (orient(q.type,82).w - orient(p.type,82).w));
+}
+function packPallets(template, moves){
+  const G = slotGeom(); const bays = (template || []).map(t => newPallet(t, G));
+  const placed = new Set(), rejected = [];
+  Object.entries(moves || {}).forEach(([uid, m]) => {
+    const it = ITEMS.find(i => i.uid === uid);
+    if(it && bays[m.bay] && tryPlace(bays[m.bay], m.slot, it)) placed.add(uid); else rejected.push(uid);
+  });
+  const e2 = ITEMS.filter(i => i.type === 'E2' && !placed.has(i.uid));
+  e2.forEach(it => { if(!firstFit(bays, it, b => b.tall)){ bays.push(newPallet(true, G)); tryPlace(bays[bays.length-1], 0, it); } });
+  orderOthers(ITEMS.filter(i => i.type !== 'E2' && !placed.has(i.uid))).forEach(it => {
+    if(!firstFit(bays, it)){ const b = newPallet(false, G); bays.push(b); if(!firstFit([b], it)) b.overflow = (b.overflow||[]).concat(it); }
+  });
+  return { bays, rejected };
+}
+function makeTruckBay(G){
+  const v = state.veh, c = G.c;
+  const clearH = v.H - 1.5 - 1.0 - 0.5;
+  const usableW = v.W - 3;
+  const maxslots = Math.max(1, Math.floor((usableW - G.slotw)/G.pitch) + 1);
+  const x0 = 1.5 + c, x1 = v.L - 2 - c;
+  const slots = [];
+  for(let s=0;s<maxslots;s++) slots.push({ items:[], segs:[] });
+  const mid = (maxslots-1)/2;
+  const order = slots.map((_,i)=>i).sort((a,b) => Math.abs(a-mid) - Math.abs(b-mid) || a - b);   // fill from the centerline out, alternating sides
+  const bay = { kind:'truck', clearH, slots, maxslots, geom:G, len:v.L, depth:v.W, deckH:v.deckH, order };
+  // slot z positions are computed in render; wheel wells block the floor in slots that sit over them
+  slots.forEach((sl, s) => {
+    const zs = 1.5 + state.tooth + s*G.pitch, ze = zs + G.slotw;
+    const overWell = v.wells && (zs < v.wellW || ze > v.W - v.wellW);
+    if(overWell){
+      const a = v.wellX - v.wellL/2 - c, b = v.wellX + v.wellL/2 + c;
+      if(a - x0 > 4) sl.segs.push({ front:x0, rear:a, nf:0, nr:0 });
+      if(x1 - b > 4) sl.segs.push({ front:b, rear:x1, nf:0, nr:0 });
+    } else sl.segs.push({ front:x0, rear:x1, nf:0, nr:0 });
+  });
+  return bay;
+}
+function packTruck(moves){
+  const G = slotGeom(); const bay = makeTruckBay(G); const bays = [bay];
+  const placed = new Set(), rejected = [], left = [];
+  Object.entries(moves || {}).forEach(([uid, m]) => {
+    const it = ITEMS.find(i => i.uid === uid);
+    if(it && tryPlace(bay, m.slot, it)) placed.add(uid); else rejected.push(uid);
+  });
+  const rest = ITEMS.filter(i => !placed.has(i.uid));
+  const byW = (p,q) => itemW(q.type, bay) - itemW(p.type, bay);
+  const pri = rest.filter(i => state.prio && archOf(i.type) === state.prio).sort(byW);
+  const oth = rest.filter(i => !(state.prio && archOf(i.type) === state.prio)).sort(byW);
+  pri.forEach(it => { if(!firstFit(bays, it, null, true)) left.push(it); });   // door end first
+  oth.forEach(it => { if(!firstFit(bays, it)) left.push(it); });               // cab end first
+  return { bays, rejected, left };
+}
+let PLAN = null;
+function makePlan(){
+  let res;
+  if(state.mode === 'P'){
+    const first = packPallets(null, null);
+    const moves = state.moves.P;
+    res = Object.keys(moves).length ? packPallets(first.bays.map(b => b.tall), moves) : first;
+    res.left = [];
+  } else res = packTruck(state.moves.T);
+  res.rejected.forEach(uid => delete state.moves[state.mode][uid]);
+  // ids, loading sequence, weights, CG
+  const seq = [];
+  res.bays.forEach((b, bi) => {
+    b.label = b.kind === 'pallet' ? `P${bi+1}` : 'Truck';
+    b.lb = 0; const cg = [0,0,0];
+    b.slots.forEach((sl, si) => {
+      sl.items.sort((p,q) => p.x - q.x);
+      sl.items.forEach((it, k) => {
+        it.bay = bi; it.slot = si; it.pos = k; it.n = sl.items.length;
+        it.id = `${b.kind==='pallet' ? b.label : 'T'}-${String(si+1).padStart(2,'0')}${String.fromCharCode(97+k)}`;
+        const o = orient(it.type, b.clearH); it.o = o; it.h = o.h;
+        const w = TY[it.type].lb; b.lb += w;
+        cg[0] += w*(it.x + o.ox); cg[1] += w*(o.oy); cg[2] += w*(si);
+        seq.push(it);
+      });
+    });
+    b.cg = b.lb ? cg.map(v => v / b.lb) : [0,0,0];
+    b.count = b.slots.reduce((a,s) => a + s.items.length, 0);
+    b.used = b.slots.filter(s => s.items.length).length;
+  });
+  if(state.mode === 'T') seq.sort((p,q) => p.x - q.x || p.slot - q.slot);   // load from the cab end toward the door
+  seq.forEach((it, i) => it.step = i+1);
+  PLAN = Object.assign(res, { seq, G: slotGeom() });
+  return PLAN;
+}
+function labelFor(b){
+  const types = b.slots.flatMap(s => s.items.map(i => i.type));
+  if(types.length && types.every(t => t==='E2')) return 'E2 curves';
+  const arches = [...new Set(types.filter(t => !t.startsWith('BB') && t !== 'E2').map(t => t[0]))].sort().join(', ');
+  return (types.includes('E2') ? 'E2 + ' : '') + (arches ? 'arches ' + arches : '') + (types.some(t => t.startsWith('BB')) ? ' + bars' : '');
+}
+
+// ---------------- three.js setup ----------------
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'low-power' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+stage.prepend(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#121518');
+const camera = new THREE.PerspectiveCamera(38, 1, 1, 8000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = false; controls.maxPolarAngle = Math.PI * 0.495;
+scene.add(new THREE.HemisphereLight('#dfe8f5', '#2a2622', 0.9));
+const sun = new THREE.DirectionalLight('#ffffff', 1.4); sun.position.set(-260, 420, 300); scene.add(sun);
+const fill = new THREE.DirectionalLight('#9fb4cc', 0.45); fill.position.set(300, 180, -260); scene.add(fill);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000), new THREE.MeshBasicMaterial({ color:'#171b1f' }));
+ground.rotation.x = -Math.PI/2; scene.add(ground);
+const grid = new THREE.GridHelper(3000, 250, '#2a3037', '#1f2429'); grid.position.y = 0.05; scene.add(grid);
+
+const matCache = {};
+function mat(key, color, opts={}){ if(!matCache[key]) matCache[key] = new THREE.MeshLambertMaterial(Object.assign({ color, side:THREE.DoubleSide }, opts)); return matCache[key]; }
+const WOOD = mat('wood', '#9c7a4f'), PLY = mat('ply', '#c9ab7a');
+const PLY_T = mat('plyT', '#c9ab7a', { transparent:true, opacity:0.55 });
+const RIB = mat('rib', '#d8bf90', { transparent:true, opacity:0.22, depthWrite:false });
+const FOAM = mat('foam', '#7d8892', { transparent:true, opacity:0.55 });
+const COMB = mat('comb', '#e6e6e0');
+const VELC = mat('velc', '#e9f1f7', { transparent:true, opacity:0.16, depthWrite:false });
+const GHOST = mat('ghost', '#8a949c', { transparent:true, opacity:0.08, depthWrite:false });
+const HILITE = mat('hi', '#ffffff', { emissive:'#f2b33d', emissiveIntensity:0.6 });
+const TRUCK_WALL = mat('twall', '#cfd6dd', { transparent:true, opacity:0.08, depthWrite:false });
+const TRUCK_BODY = mat('tbody', '#d9dee3');
+const TRUCK_DARK = mat('tdark', '#3a4047');
+const WELL = mat('well', '#6b737b');
+const ORANGE = mat('orange', '#e5732a');
+function shade(hex, f){ const c = new THREE.Color(hex); c.offsetHSL(0, -0.1, f); return '#'+c.getHexString(); }
+function pieceMat(type, kind){
+  const base = state.color==='arch' ? ARCH_COL[archOf(type)] : SEC_COL[secKind(type)];
+  const flat = (kind==='P' || kind==='PA' || kind==='bar'), rung = (kind==='R' || kind==='R2');
+  return mat(state.color+':'+base+(flat?':f':rung?':r':''), flat ? shade(base,-0.22) : rung ? shade(base,0.08) : base);
+}
+
+// geometry cache, keyed by section + angle (angles come from a 0.5° grid, so this stays small)
+const gCache = new Map();
+function shapeOf(pts){ const s = new THREE.Shape(); s.moveTo(pts[0][0], pts[0][1]); for(let i=1;i<pts.length;i++) s.lineTo(pts[i][0], pts[i][1]); s.closePath(); return s; }
+function sectionGeo(type, o){
+  const key = type + '@' + o.a + '|' + o.ox.toFixed(3); if(gCache.has(key)) return gCache.get(key);
+  const pcs = xform(type, o);
+  const pieces = pcs.map(pc => ({ k:pc.k, geo:new THREE.ExtrudeGeometry(shapeOf(pc.p), { depth:1, bevelEnabled:false, curveSegments:1 }) }));
+  const pts = pcs.flatMap(pc => pc.p);
+  const xs = pts.map(p => p[0]); const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const prof = []; for(let x=minX; x<=maxX+0.01; x+=0.5){ let m = 1e9; for(const p of pts) if(Math.abs(p[0]-x) < 0.5 && p[1] < m) m = p[1]; if(m < 1e9) prof.push([x, m]); }
+  const lowX = pts.filter(p => p[1] <= 6).map(p => p[0]);
+  const plumb = (Math.max(...lowX) - Math.min(...lowX)) <= 9.5 && o.w <= 14;
+  let rib = null;
+  if(!plumb){
+    const lo = 0.75; const rp = [[prof[0][0], lo]].concat(prof.map(([x,y]) => [x, Math.max(y-0.25, lo+0.05)])).concat([[prof[prof.length-1][0], lo]]);
+    rib = new THREE.ExtrudeGeometry(shapeOf(rp), { depth:0.75, bevelEnabled:false, curveSegments:1 });
+  }
+  const hiX = pts.filter(p => p[1] >= o.h - 3).map(p => p[0]);
+  const r = { pieces, rib, pocket:[Math.min(...lowX), Math.max(...lowX)], cap:[Math.min(...hiX), Math.max(...hiX)] };
+  gCache.set(key, r); return r;
+}
+
+// ---------------- scene build ----------------
+const root = new THREE.Group(); scene.add(root);
+let pickables = [], secGroups = [], disposables = [], bayInfo = [];
+function box(w,h,d,material,x,y,z,parent){
+  const g = new THREE.BoxGeometry(Math.max(w,0.01),Math.max(h,0.01),Math.max(d,0.01)); disposables.push(g);
+  const m = new THREE.Mesh(g, material); m.position.set(x+w/2, y+h/2, z+d/2); parent.add(m); return m;
+}
+function textSprite(lines, color='#e8ebee', scale=1){
+  const c = document.createElement('canvas'); const s = 2; c.width = 640*s; c.height = 150*s;
+  const x = c.getContext('2d'); x.scale(s,s);
+  x.fillStyle = 'rgba(26,30,34,0.86)'; x.strokeStyle = '#30363d'; x.lineWidth = 2;
+  x.beginPath(); x.roundRect(4,4,632,142,14); x.fill(); x.stroke();
+  x.fillStyle = color; x.font = '600 46px "IBM Plex Sans Condensed", sans-serif'; x.fillText(lines[0], 24, 62);
+  x.fillStyle = '#98a2ab'; x.font = '400 30px "IBM Plex Mono", monospace'; x.fillText(lines[1] || '', 24, 114);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; disposables.push(tex);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, depthWrite:false })); sp.scale.set(46*scale, 10.8*scale, 1); return sp;
+}
+function lineLoop(pts, color, parent, dashed){
+  const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(...p))); disposables.push(g);
+  const m = dashed ? new THREE.LineDashedMaterial({ color, dashSize:3, gapSize:2 }) : new THREE.LineBasicMaterial({ color });
+  const l = new THREE.Line(g, m); if(dashed) l.computeLineDistances(); parent.add(l); return l;
+}
+// one section standing in its slot, with its velcro layer, rib or pocket, cap and spacer
+function addSection(parent, it, bay, base, zp, capTop, flip){
+  const t = TY[it.type]; const o = it.o;
+  const sec = new THREE.Group(); sec.position.set(it.x, base, zp); sec.userData.it = it; parent.add(sec); secGroups.push(sec);
+  if(t.bar){
+    const rows = Math.ceil(t.bar/3);
+    for(let b=0;b<t.bar;b++){ const m = box(0.95, t.len, 1/rows - 0.02, pieceMat(it.type,'bar'), (b%3), 0, Math.floor(b/3)*(1/rows), sec); m.userData.kind='bar'; m.userData.it = it; pickables.push(m); }
+  } else {
+    const body = new THREE.Group(); sec.add(body);
+    if(flip){ body.scale.x = -1; body.position.x = o.w; }
+    const G = sectionGeo(it.type, o);
+    G.pieces.forEach(({k, geo}) => {
+      const m = new THREE.Mesh(geo, pieceMat(it.type, k)); m.userData.kind = k; m.userData.it = it; body.add(m); pickables.push(m);
+      if(state.velc && bay.geom.c > 0){ const v = new THREE.Mesh(geo, VELC); v.scale.z = 1 + 2*bay.geom.c; v.position.z = -bay.geom.c; v.userData.sup = it; v.renderOrder = 2; body.add(v); }
+    });
+    if(state.sup){
+      const sw = bay.geom.slotw;
+      if(G.rib){ const r = new THREE.Mesh(G.rib, RIB); r.position.z = 0.125; r.userData.sup = it; body.add(r); }
+      else { const f = box(G.pocket[1]-G.pocket[0]+2, 2.5, sw, FOAM, G.pocket[0]-1, 0, -(sw-1)/2, body); f.userData.sup = it; }
+      const ch = capTop - base - (o.h - 1.5);
+      if(ch > 0.2){ const c = box(G.cap[1]-G.cap[0]+2, ch, sw, FOAM, G.cap[0]-1, o.h-1.5, -(sw-1)/2, body); c.userData.sup = it; }
+      if(it.pos > 0){ const s = box(SPACER-0.3, 30, 1, PLY, -bay.geom.gap + bay.geom.c + 0.15, 3.5, 0, sec); s.userData.sup = it; }
+    }
+  }
+  return sec;
+}
+function addCombs(g, bay, base, yTop, zFirst, P, stations, zWallIn, zWallOut){
+  const G = bay.geom, tooth = state.tooth;
+  [base+3, base + (yTop-base)*0.48, yTop-3.5].forEach(y => {
+    stations.forEach(xc => box(1.0, 1.5, zWallOut - zWallIn, COMB, xc-0.5, y, zWallIn, g));
+    const tg = new THREE.BoxGeometry(3, 1.5, tooth); disposables.push(tg);
+    const n = bay.maxslots + 1; const inst = new THREE.InstancedMesh(tg, COMB, n*stations.length); const m4 = new THREE.Matrix4(); let k = 0;
+    for(let i=0;i<n;i++){
+      const zc = i===0 ? zFirst - tooth/2 : zFirst + (i-1)*P + G.slotw + tooth/2;
+      stations.forEach(xc => { m4.makeTranslation(xc + (xc < bay.len/2 ? 2 : -2), y+0.75, zc); inst.setMatrixAt(k++, m4); });
+    }
+    g.add(inst);
+  });
+}
+function buildPallet(b, bi, px){
+  const g = new THREE.Group(); g.position.x = px; root.add(g);
+  const G = b.geom, P = G.pitch * state.spread, tooth = state.tooth, POST = PAL.POST;
+  const base = b.deckH + 0.75, railU = base + b.clearH + 0.25;
+  const z0 = POST + tooth;
+  const span = z0 + (b.maxslots-1)*P + G.slotw + tooth + POST;
+  const span1 = z0 + (b.maxslots-1)*G.pitch + G.slotw + tooth + POST;
+  const D = PAL.D + (span - span1);
+  const zShift = (D - span)/2;
+  if(state.rack){
+    const sH = b.deckH - 0.75;
+    [0, D/2-0.75, D-1.5].forEach(z => box(PAL.W, sH, 1.5, WOOD, 0, 0, z, g));
+    for(let i=0;i<7;i++) box(3.5, 0.75, D, WOOD, i*(PAL.W-3.5)/6, sH, 0, g);
+    [[0,0],[PAL.W-POST,0],[0,D-3.5],[PAL.W-POST,D-3.5]].forEach(([x,z]) => box(POST, b.top-b.deckH, 3.5, WOOD, x, b.deckH, z, g));
+    box(PAL.W-2*POST, 1.5, D-2*POST, PLY, POST, b.deckH, POST, g);
+    [POST, PAL.W/2-1, PAL.W-POST-2].forEach(x => box(2, b.railT, D-2*POST, PLY_T, x, railU, POST, g));
+    addCombs(g, b, base, railU, zShift + z0, P, [POST+0.5, PAL.W-POST-0.5], POST, D-POST);
+  }
+  if(state.limit) lineLoop([[0,90,0],[PAL.W,90,0],[PAL.W,90,D],[0,90,D],[0,90,0]], '#ff6b5e', g, true);
+  const flipCount = {};
+  b.slots.forEach((sl, si) => {
+    const zp = zShift + z0 + si*P + (G.slotw-1)/2;
+    sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1; addSection(g, it, b, base, zp, railU, flipCount[it.type]%2===0); });
+  });
+  const lbl = textSprite([`${b.label}${b.tall?'  ·  tall rack':''}`, `48×40×${frac(b.top)}  ${ftin(b.top)}`], b.tall ? '#f2b33d' : '#e8ebee');
+  lbl.position.set(PAL.W/2, b.top + 12, D/2); g.add(lbl);
+  bayInfo.push({ x:px, len:PAL.W, depth:D, top:b.top, center:new THREE.Vector3(px + PAL.W/2, b.top/2, D/2) });
+}
+function buildTruck(b){
+  const v = state.veh, g = new THREE.Group(); root.add(g);
+  const G = b.geom, P = G.pitch * state.spread, tooth = state.tooth;
+  const floor = v.deckH, base = floor + 0.75, railU = base + b.clearH + 0.25;
+  const z0 = 1.5 + tooth;
+  const span = z0 + (b.maxslots-1)*P + G.slotw + tooth + 1.5;
+  const Wd = Math.max(v.W, span);
+  if(state.rack){
+    // chassis, cab, wheels
+    box(v.L + 20, 8, Wd - 10, TRUCK_DARK, -20, floor - 14, 5, g);
+    box(v.L, 3, Wd, TRUCK_BODY, 0, floor - 3, 0, g);
+    const cabL = 72; box(cabL, floor + 52, Wd - 4, TRUCK_BODY, -cabL - 22, 14, 2, g);
+    box(18, 30, Wd - 10, TRUCK_DARK, -cabL - 4, floor + 4, 5, g);
+    const wg = new THREE.CylinderGeometry(16, 16, 9, 20); disposables.push(wg); wg.rotateX(Math.PI/2);
+    [[-cabL - 2, 0], [v.wellX, 0]].forEach(([wx]) => [-2, Wd + 2].forEach(wz => { const w = new THREE.Mesh(wg, TRUCK_DARK); w.position.set(wx, 16, wz); g.add(w); }));
+    // box walls (see-through), roof edges, door frame
+    box(v.L, v.H, 0.5, TRUCK_WALL, 0, floor, -0.5, g); box(v.L, v.H, 0.5, TRUCK_WALL, 0, floor, Wd, g);
+    box(0.5, v.H, Wd, TRUCK_WALL, -0.5, floor, 0, g); box(v.L, 0.5, Wd, TRUCK_WALL, 0, floor + v.H, 0, g);
+    const H = v.H, e = [[0,floor,0],[v.L,floor,0],[v.L,floor+H,0],[0,floor+H,0],[0,floor,0],[0,floor,Wd],[v.L,floor,Wd],[v.L,floor+H,Wd],[0,floor+H,Wd],[0,floor,Wd]];
+    lineLoop(e, '#6c7681', g); lineLoop([[0,floor+H,0],[0,floor+H,Wd]], '#6c7681', g); lineLoop([[v.L,floor+H,0],[v.L,floor+H,Wd]], '#6c7681', g); lineLoop([[v.L,floor,0],[v.L,floor,Wd]], '#6c7681', g);
+    const dz = (Wd - v.doorW)/2;
+    lineLoop([[v.L,floor,dz],[v.L,floor+v.doorH,dz],[v.L,floor+v.doorH,dz+v.doorW],[v.L,floor,dz+v.doorW]], '#f2b33d', g);
+    box(0.6, v.H - v.doorH, Wd, TRUCK_BODY, v.L, floor + v.doorH, 0, g);
+    if(dz > 0.5){ box(0.6, v.doorH, dz, TRUCK_BODY, v.L, floor, 0, g); box(0.6, v.doorH, dz, TRUCK_BODY, v.L, floor, dz + v.doorW, g); }
+    if(v.atticH > 0){ const aL = Math.max(0, v.insideL - v.L); if(aL > 0) box(aL, v.atticH, Wd, TRUCK_WALL, -aL, floor + v.H - v.atticH, 0, g); }
+    if(v.ramp > 0){ const rl = floor*2.4; const rg = new THREE.BoxGeometry(rl, 1.2, v.ramp); disposables.push(rg);
+      const r = new THREE.Mesh(rg, TRUCK_DARK); const ang = Math.atan2(floor, rl);
+      r.position.set(v.L + Math.cos(ang)*rl/2, floor/2, Wd/2); r.rotation.z = -ang; g.add(r); }
+    if(v.wells){ [0, Wd - v.wellW].forEach(z => box(v.wellL, v.wellH, v.wellW, WELL, v.wellX - v.wellL/2, floor, z, g)); }
+    // in-truck rack: base board, top rails, combs
+    box(v.L - 3, 1.5, Wd - 3, PLY, 1.5, floor, 1.5, g);
+    [1.5, Wd/2 - 1, Wd - 3.5].forEach(z => box(v.L - 3, 1, 2, PLY_T, 1.5, railU, z, g));
+    addCombs(g, b, base, railU, z0, P, [2, v.L*0.5, v.L - 3], 1.5, Wd - 1.5);
+  }
+  const flipCount = {};
+  b.slots.forEach((sl, si) => {
+    const zp = z0 + si*P + (G.slotw-1)/2;
+    sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1; addSection(g, it, b, base, zp, railU, flipCount[it.type]%2===0); });
+  });
+  const lbl = textSprite([v.name.replace(' (enter your own numbers)',''), `floor ${ftin(v.L)} · door ${frac(v.doorW)}×${frac(v.doorH)}`]);
+  lbl.position.set(v.L/2, floor + v.H + 16, Wd/2); g.add(lbl);
+  bayInfo.push({ x:0, len:v.L, depth:Wd, top:floor + v.H, center:new THREE.Vector3(v.L/2, floor + v.H/2, Wd/2) });
+  // pieces that did not fit, stood up beside the truck
+  if(PLAN.left.length){
+    const lg = new THREE.Group(); lg.position.set(0, 0, -60); root.add(lg);
+    let x = 0; const fake = { geom: Object.assign({}, G, { c:0 }), clearH:200 };
+    PLAN.left.forEach(it0 => { const o = orient(it0.type, 200); const it = Object.assign({}, it0, { o, x, h:o.h, pos:0, id:'—', bay:-1, slot:-1, left:true });
+      addSection(lg, it, Object.assign({}, fake, { geom:Object.assign({}, G, { c:0 }) }), 0, 0, 0, false); x += o.w + 4; });
+    const l2 = textSprite([`${PLAN.left.length} pieces don't fit`, 'shown beside the truck'], '#ff8f84'); l2.position.set(Math.min(x,300)/2, 110, -60); root.add(l2);
+  }
+}
+function build(){
+  root.clear(); disposables.forEach(d => d.dispose()); disposables = []; pickables = []; secGroups = []; bayInfo = [];
+  makePlan();
+  if(state.mode === 'P'){ let px = 0; PLAN.bays.forEach((b, bi) => { buildPallet(b, bi, px); px += PAL.W + 40; }); }
+  else buildTruck(PLAN.bays[0]);
+  if(state.step == null || state.step > PLAN.seq.length) state.step = PLAN.seq.length;
+  $('step').max = PLAN.seq.length; $('step').value = state.step;
+  applyVisibility(); renderPanels();
+}
+
+// ---------------- visibility, filter, selection ----------------
+function sameIt(a,b){ return a && b && a.uid === b.uid; }
+function applyVisibility(){
+  const cur = state.step < PLAN.seq.length ? PLAN.seq[state.step-1] : null;
+  secGroups.forEach(g => { const it = g.userData.it; g.visible = it.left || it.step <= state.step; });
+  root.traverse(o => {
+    if(!o.isMesh) return;
+    const it = o.userData.it || o.userData.sup; if(!it) return;
+    if(!o.userData.base) o.userData.base = o.material;
+    const dim = state.arch !== 'all' && archOf(it.type) !== state.arch;
+    const hi = o.userData.it && (sameIt(it, state.sel) || sameIt(it, cur));
+    o.material = dim ? GHOST : (hi ? HILITE : o.userData.base);
+  });
+  stepText(); requestRender();
+}
+function refreshMaterials(){ root.traverse(o => { if(o.isMesh && o.userData.it && o.userData.kind) o.userData.base = pieceMat(o.userData.it.type, o.userData.kind); }); applyVisibility(); renderLegend(); }
+
+function where(it){
+  if(it.left) return "Doesn't fit in this truck";
+  const b = PLAN.bays[it.bay];
+  if(b.kind === 'pallet') return `Pallet ${it.bay+1}, slot ${it.slot+1} of ${b.maxslots}` + (it.n>1 ? `, piece ${it.pos+1} of ${it.n}` : '');
+  return `Truck slot ${it.slot+1} of ${b.maxslots}, ${ftin(it.x)} from the front wall`;
+}
+function describe(it){
+  const t = TY[it.type];
+  return { name: it.type.startsWith('BB') ? `Bottom bars (${archOf(it.type)})` : it.type, desc:t.desc,
+    size: t.bar ? `${frac(t.len)} bars, bundled` : `${frac(it.o.h)} tall × ${frac(it.o.w)} long in slot × 1"`, lb:t.lb };
+}
+function stepText(){
+  const n = PLAN.seq.length, el = $('stepText');
+  if(state.step >= n){ el.innerHTML = `Showing the finished load: <b>${n}</b> pieces. Drag the slider or press Play to watch it load piece by piece.` + (state.mode==='T' ? ' Unload in reverse.' : ''); return; }
+  const it = PLAN.seq[state.step-1];
+  el.innerHTML = state.step === 0 ? 'Empty. Press ▶ to load the first piece.' :
+    `<b>Step ${state.step} of ${n}:</b> load <b class="mono">${it.id}</b> · ${describe(it).name} (${describe(it).desc}) into ${where(it).toLowerCase()}.`;
+}
+
+// ---------------- panels ----------------
+function tiles(){
+  const G = PLAN.G, b0 = PLAN.bays[0];
+  let html = `<div><b>${frac(G.slotw)}</b><span>slot</span></div><div><b>${frac(G.pitch)}</b><span>pitch</span></div><div><b>${b0.maxslots}</b><span>slots per ${state.mode==='P'?'pallet':'truck'}</span></div>`;
+  if(state.mode === 'P'){ const nt = PLAN.bays.filter(b=>b.tall).length; html += `<div><b>${PLAN.bays.length}</b><span>pallets (${nt} tall)</span></div>`; }
+  else html += `<div><b>${b0.used}</b><span>slots used</span></div>`;
+  $('tiles').innerHTML = html; $('clearOut').textContent = frac(state.clear);
+}
+function renderPallets(){
+  const el = $('pals'); el.innerHTML = '';
+  const all = document.createElement('button'); all.className = 'pal'; all.setAttribute('aria-pressed','false');
+  const tot = PLAN.bays.reduce((a,b)=>a+b.lb,0);
+  all.innerHTML = `<span class="n">All ${PLAN.bays.length} pallets</span><span class="h">${lb(tot)} Al</span><span class="d">Frame the whole shipment</span>`;
+  all.onclick = () => frameAll(); el.appendChild(all);
+  PLAN.bays.forEach((b, i) => {
+    const btn = document.createElement('button'); btn.className = 'pal'; btn.setAttribute('aria-pressed','false');
+    btn.innerHTML = `<span class="n">P${i+1} · ${labelFor(b)}</span><span class="h ${b.tall?'tall':''}">${ftin(b.top)}</span>` +
+      `<span class="d">${b.used}/${b.maxslots} slots · ${b.count} pieces · ${lb(b.lb)} aluminum · CG ${frac(b.deckH + 0.75 + b.cg[1])} up</span>`;
+    btn.onclick = () => focusBay(i); el.appendChild(btn);
+  });
+}
+function checkRow(ok, text, warn){ return `<li><span class="pill ${ok ? 'ok' : warn ? 'warnc' : 'no'}">${ok ? 'OK' : warn ? 'CHECK' : 'NO'}</span><span>${text}</span></li>`; }
+function renderTruck(){
+  const v = state.veh, b = PLAN.bays[0];
+  const total = ITEMS.reduce((a,i)=>a+TY[i.type].lb,0), loaded = b.lb;
+  const pct = Math.min(100, loaded / v.maxLoad * 100);
+  const palTall = packPallets(null,null).bays; const tallest = Math.max(...palTall.map(p=>p.top)), shortest = Math.min(...palTall.map(p=>p.top));
+  let h = '';
+  h += checkRow(!PLAN.left.length, PLAN.left.length ? `<b>${PLAN.left.length} pieces don't fit</b> (${[...new Set(PLAN.left.map(i=>i.type))].join(', ')}). They're shown beside the truck. Try a bigger truck or less clearance.` : `All ${ITEMS.length} pieces fit in ${b.used} of ${b.maxslots} slots.`);
+  h += checkRow(loaded <= v.maxLoad, `Payload ${lb(loaded)} of aluminum against a ${lb(v.maxLoad)} max load. Racks and foam are extra.<div class="bar"><i style="width:${pct}%"></i></div>`);
+  h += checkRow(true, `Each section passes through the ${frac(v.doorW)} × ${frac(v.doorH)} door when carried in lengthwise; the in-truck racks are built in place.`);
+  h += checkRow(shortest + 0 <= v.doorH && 40 <= v.doorW, `Pre-built pallet racks: ${frac(shortest)}${tallest>shortest?`–${frac(tallest)}`:''} tall against a ${frac(v.doorH)} door, so they ${shortest <= v.doorH ? 'fit' : "can't go in standing"}.`, false);
+  if(v.ramp > 0) h += checkRow(false, `Loading ramp is ${frac(v.ramp)} wide: fine for carrying sections, too narrow for a pallet jack. No liftgate.`, true);
+  if(v.liftgate) h += checkRow(true, 'Liftgate: confirm its platform depth and rated load with the rental.', false);
+  if(v.wells) h += checkRow(false, `Wheel wells take floor space in the ${b.slots.filter(s=>s.segs.length>1 || s.segs[0].rear - s.segs[0].front < v.L - 10).length} slots along each wall. Well size is an estimate; measure yours.`, true);
+  const cgF = b.cg[0] / v.L * 100;
+  const zc = 1.5 + state.tooth + b.cg[2]*PLAN.G.pitch + PLAN.G.slotw/2, lat = zc - v.W/2;
+  h += checkRow(cgF >= 35 && cgF <= 60 && Math.abs(lat) <= 3, `Load center of gravity ${ftin(b.cg[0])} from the front wall (${Math.round(cgF)}% of the floor) and ${frac(Math.abs(lat))} ${lat<0?'left':'right'} of the centerline. Keep heavy load ahead of the rear axle and centered side to side.`, true);
+  $('truckChecks').innerHTML = h;
+}
+function renderDims(){
+  const v = state.veh, el = $('dims');
+  el.innerHTML = DIM_FIELDS.map(([k, name]) => `<label for="d_${k}">${name}</label><input id="d_${k}" type="number" min="0" step="1" value="${v[k]}">`).join('') +
+    `<label for="d_wells">Wheel wells inside the box</label><input id="d_wells" type="checkbox" ${v.wells?'checked':''}>`;
+  DIM_FIELDS.forEach(([k]) => $('d_'+k).onchange = e => { state.veh[k] = Math.max(0, +e.target.value || 0); state.moves.T = {}; rebuildKeep(); });
+  $('d_wells').onchange = e => { state.veh.wells = e.target.checked; state.moves.T = {}; rebuildKeep(); };
+}
+function renderLegend(){
+  const el = $('legend');
+  const extra = `<span><i class="sw" style="background:#c9ab7a"></i>Rack / ribs</span><span><i class="sw" style="background:#7d8892"></i>Foam</span><span><i class="sw" style="background:#e9f1f7;opacity:.5"></i>Velcro</span>`;
+  el.innerHTML = (state.color==='arch' ? Object.entries(ARCH_COL).map(([a,c]) => `<span><i class="sw" style="background:${c}"></i>Arch ${a}</span>`)
+    : Object.entries(SEC_COL).map(([k,c]) => `<span><i class="sw" style="background:${c}"></i>${SEC_NAME[k]}</span>`)).join('') + extra;
+}
+function renderMoves(){
+  const n = Object.keys(state.moves[state.mode]).length;
+  $('movesCount').textContent = n ? `${n} manual move${n>1?'s':''}` : 'No manual moves';
+  $('movesReset').disabled = !n;
+}
+function renderCost(){
+  const cp = +$('costPallet').value, cr = +$('costRack').value, ct = +$('costTruck').value, ctr = +$('costTruckRack').value;
+  const nP = state.mode === 'P' ? PLAN.bays.length : packPallets(null,null).bays.length;
+  const parts = [];
+  if(cp || cr) parts.push(`<b>Pallets:</b> ${nP} × ($${(cp||0).toLocaleString()} + $${(cr||0).toLocaleString()}) = <b>$${(nP*((cp||0)+(cr||0))).toLocaleString()}</b>`);
+  if(ct || ctr) parts.push(`<b>Truck:</b> $${(ct||0).toLocaleString()} + $${(ctr||0).toLocaleString()} = <b>$${((ct||0)+(ctr||0)).toLocaleString()}</b>`);
+  $('costOut').innerHTML = parts.length ? parts.join('<br>') : 'Enter your quotes to compare. Pallet count comes from the current pallet plan.';
+}
+function renderPanels(){
+  tiles(); renderLegend(); renderMoves(); renderCost();
+  $('palletPanel').hidden = state.mode !== 'P'; $('truckPanel').hidden = state.mode !== 'T';
+  if(state.mode === 'P') renderPallets(); else renderTruck();
+  if(state.sel){ const it = PLAN.seq.find(i => i.uid === state.sel.uid); state.sel = it || null; }
+  showSel(state.sel);
+}
+
+// ---------------- selection + manual moves ----------------
+function showSel(it){
+  const dl = $('selDl'), mb = $('moveBox');
+  if(!it){ $('selTitle').textContent = 'Click any piece'; $('selHint').hidden = false; dl.hidden = true; mb.hidden = true; return; }
+  const d = describe(it);
+  $('selTitle').textContent = `${it.id} · ${d.name} · ${d.desc}`; $('selHint').hidden = true; dl.hidden = false; mb.hidden = false;
+  dl.innerHTML = `<dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb} lb aluminum</dd><dt>Clearance</dt><dd>${frac(PLAN.G.c)} each face, ${frac(PLAN.G.slotw)} slot</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
+  $('moveBay').innerHTML = PLAN.bays.map((b,i) => `<option value="${i}">${b.label}</option>`).join('');
+  $('moveBay').value = Math.max(0, it.bay); $('moveSlot').max = PLAN.bays[Math.max(0,it.bay)].maxslots; $('moveSlot').value = it.slot + 1;
+  $('moveMsg').textContent = '';
+}
+$('moveGo').onclick = () => {
+  const it = state.sel; if(!it) return;
+  const bay = +$('moveBay').value, slot = (+$('moveSlot').value) - 1, b = PLAN.bays[bay];
+  if(!(slot >= 0 && slot < b.maxslots)){ $('moveMsg').innerHTML = `<span style="color:var(--bad)">Pick a slot from 1 to ${b.maxslots}.</span>`; return; }
+  const prev = state.moves[state.mode][it.uid];
+  state.moves[state.mode][it.uid] = { bay, slot };
+  const uid = it.uid; build();
+  const now = PLAN.seq.find(i => i.uid === uid);
+  if(!state.moves[state.mode][uid] || !now || now.bay !== bay || now.slot !== slot){
+    if(prev) state.moves[state.mode][uid] = prev; else delete state.moves[state.mode][uid];
+    build(); state.sel = PLAN.seq.find(i => i.uid === uid) || null; showSel(state.sel); applyVisibility();
+    $('moveMsg').innerHTML = `<span style="color:var(--bad)">It doesn't fit in ${b.label} slot ${slot+1}: there isn't ${frac(itemW(it.type, b) + PLAN.G.gap)} of free length there.</span>`;
+    return;
+  }
+  state.sel = now; showSel(now); applyVisibility();
+  $('moveMsg').innerHTML = `<span style="color:var(--good)">Moved to ${b.label} slot ${slot+1}. Other pieces re-packed around it.</span>`;
+};
+$('movesReset').onclick = () => { state.moves[state.mode] = {}; rebuildKeep(); };
+
+// ---------------- modals: packing list, weight & balance ----------------
+let modalTSV = '';
+function openModal(title, sub, head, rows){
+  $('modalTitle').textContent = title; $('modalSub').textContent = sub;
+  $('modalBody').innerHTML = `<table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  modalTSV = [head].concat(rows).map(r => r.map(c => String(c).replace(/<[^>]+>/g,'')).join('\t')).join('\n');
+  $('modal').style.display = 'flex'; $('modalClose').focus();
+}
+$('openList').onclick = () => {
+  const rows = PLAN.seq.map(it => { const d = describe(it); return [it.step, `<span class="mono">${it.id}</span>`, where(it), d.name, archOf(it.type), d.desc, d.size, d.lb.toFixed(1)]; })
+    .concat(PLAN.left.map(it => ['—','—',"Doesn't fit", it.type, archOf(it.type), TY[it.type].desc, '', TY[it.type].lb.toFixed(1)]));
+  openModal('Packing list', `${PLAN.seq.length} pieces in loading order${state.mode==='T'?' (unload in reverse)':''}. IDs read container, slot, position: P2-07b is pallet 2, slot 7, second piece.`,
+    ['Step','ID','Location','Section','Arch','Piece','Size','lb'], rows);
+};
+$('openWeights').onclick = () => {
+  const rows = PLAN.bays.map(b => {
+    if(b.kind === 'pallet') return [b.label, labelFor(b), b.count, lb(b.lb), b.tall ? '~120 lb' : '~110 lb', lb(b.lb + (b.tall?120:110)),
+      frac(b.deckH + 0.75 + b.cg[1]), `${frac(Math.abs(b.cg[0] - PAL.W/2))} ${b.cg[0] < PAL.W/2 ? 'left' : 'right'} of center`];
+    const v = state.veh; return ['Truck', v.name, b.count, lb(b.lb), 'not counted', lb(b.lb), frac(v.deckH + 0.75 + b.cg[1]) + ' above ground', `${ftin(b.cg[0])} from front wall, ${frac(Math.abs(1.5 + state.tooth + b.cg[2]*PLAN.G.pitch + PLAN.G.slotw/2 - v.W/2))} off centerline`];
+  });
+  openModal('Weight & balance', 'Aluminum weights are from the Rhino geometry (0.125" wall tube, ¼" flat). Rack and pallet weights are estimates. CG = center of gravity of the aluminum.',
+    ['Unit','Contents','Pieces','Aluminum','Rack + pallet','Total','CG height','CG offset'], rows);
+};
+$('modalClose').onclick = () => $('modal').style.display = 'none';
+$('modal').onclick = e => { if(e.target.id === 'modal') $('modal').style.display = 'none'; };
+document.addEventListener('keydown', e => { if(e.key === 'Escape') $('modal').style.display = 'none'; });
+$('modalCopy').onclick = async () => { try { await navigator.clipboard.writeText(modalTSV); $('modalCopy').textContent = 'Copied'; } catch { $('modalCopy').textContent = 'Copy blocked'; } setTimeout(()=>$('modalCopy').textContent='Copy for spreadsheet', 1600); };
+
+// ---------------- controls ----------------
+function rebuildKeep(){ const n = bayInfo.length; state.step = null; build(); if(bayInfo.length !== n) frameAll(); }
+function setMode(m){ state.mode = m; state.sel = null; state.step = null; $('modeP').setAttribute('aria-pressed', m==='P'); $('modeT').setAttribute('aria-pressed', m==='T'); build(); frameAll(true); }
+$('modeP').onclick = () => setMode('P'); $('modeT').onclick = () => setMode('T');
+function setTooth(v){ state.tooth = v; $('toothT').setAttribute('aria-pressed', v===0.375); $('toothS').setAttribute('aria-pressed', v===0.5); state.moves = { P:{}, T:{} }; rebuildKeep(); }
+$('toothT').onclick = () => setTooth(0.375); $('toothS').onclick = () => setTooth(0.5);
+$('clear').oninput = e => { state.clear = +e.target.value; state.moves = { P:{}, T:{} }; rebuildKeep(); };
+$('vehicle').innerHTML = Object.entries(VEHICLES).map(([k,v]) => `<option value="${k}">${v.name}</option>`).join('');
+$('vehicle').value = state.vehicle;
+$('vehicle').onchange = e => { state.vehicle = e.target.value; state.veh = vehDefaults(state.vehicle); state.moves.T = {}; renderDims(); state.step = null; build(); frameAll(); };
+$('prio').onchange = e => { state.prio = e.target.value; rebuildKeep(); };
+$('spread').oninput = e => { state.spread = +e.target.value; build(); };
+$('rack').onchange = e => { state.rack = e.target.checked; build(); };
+$('sup').onchange = e => { state.sup = e.target.checked; build(); };
+$('velc').onchange = e => { state.velc = e.target.checked; build(); };
+$('limit').onchange = e => { state.limit = e.target.checked; build(); };
+$('colorby').onchange = e => { state.color = e.target.value; refreshMaterials(); };
+['costPallet','costRack','costTruck','costTruckRack'].forEach(id => $(id).oninput = renderCost);
+const archEl = $('arches');
+['all','A','B','C','D','E'].forEach(a => {
+  const b = document.createElement('button'); b.dataset.a = a; b.setAttribute('aria-pressed', a==='all');
+  b.innerHTML = a==='all' ? 'All' : `<span class="sw" style="background:${ARCH_COL[a]}"></span>${a} <span style="color:var(--muted)">×${QTY[a]}</span>`;
+  b.onclick = () => { state.arch = a; archEl.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x.dataset.a===a)); applyVisibility(); };
+  archEl.appendChild(b);
+});
+// load sequence
+let playTimer = null;
+function setStep(s){ state.step = Math.max(0, Math.min(PLAN.seq.length, s)); $('step').value = state.step; applyVisibility(); }
+$('step').oninput = e => setStep(+e.target.value);
+$('stepPrev').onclick = () => setStep(state.step - 1);
+$('stepNext').onclick = () => setStep(state.step + 1);
+$('stepPlay').onclick = () => {
+  if(playTimer){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; }
+  if(state.step >= PLAN.seq.length) setStep(0);
+  $('stepPlay').textContent = 'Pause';
+  playTimer = setInterval(() => { if(state.step >= PLAN.seq.length){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; } setStep(state.step + 1); }, reduce ? 600 : 260);
+};
+
+// ---------------- picking ----------------
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let downAt = null;
+function visibleUp(o){ while(o){ if(!o.visible) return false; o = o.parent; } return true; }
+function pick(ev){
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((ev.clientX - r.left)/r.width)*2 - 1, -((ev.clientY - r.top)/r.height)*2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const h = ray.intersectObjects(pickables, false).find(h => h.object.material !== GHOST && visibleUp(h.object));
+  return h ? h.object.userData.it : null;
+}
+renderer.domElement.addEventListener('pointermove', ev => {
+  const it = pick(ev), r = stage.getBoundingClientRect();
+  if(it){ const d = describe(it);
+    tip.innerHTML = `<b>${it.id} · ${d.name}</b> ${d.desc}<br>${d.size}<br><span style="color:var(--muted)">${where(it)}</span>`;
+    tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 270) + 'px'; tip.style.top = (ev.clientY - r.top + 14) + 'px';
+    renderer.domElement.style.cursor = 'pointer';
+  } else { tip.style.display = 'none'; renderer.domElement.style.cursor = ''; }
+});
+renderer.domElement.addEventListener('pointerleave', () => tip.style.display = 'none');
+renderer.domElement.addEventListener('pointerdown', ev => downAt = [ev.clientX, ev.clientY]);
+renderer.domElement.addEventListener('pointerup', ev => {
+  if(!downAt || Math.hypot(ev.clientX-downAt[0], ev.clientY-downAt[1]) > 5) return;
+  const it = pick(ev); state.sel = it && !it.left ? it : null; showSel(state.sel); applyVisibility();
+});
+
+// ---------------- camera + render on demand ----------------
+let anim = null, queued = false;
+function requestRender(){ if(!queued){ queued = true; requestAnimationFrame(frame); } }
+function frame(now){
+  queued = false;
+  if(anim){
+    const k = Math.min(1, (now - anim.t0)/anim.dur), e = k<0.5 ? 2*k*k : 1 - Math.pow(-2*k+2, 2)/2;
+    controls.target.lerpVectors(anim.ft, anim.tt, e); camera.position.lerpVectors(anim.fp, anim.tp, e);
+    if(k >= 1) anim = null; else requestRender();
+    controls.update();
+  }
+  renderer.render(scene, camera);
+}
+controls.addEventListener('change', requestRender);
+function flyTo(target, pos, instant){
+  if(instant || reduce){ controls.target.copy(target); camera.position.copy(pos); controls.update(); requestRender(); return; }
+  anim = { t0: performance.now(), dur: 700, ft: controls.target.clone(), fp: camera.position.clone(), tt: target, tp: pos }; requestRender();
+}
+function frameAll(instant){
+  if(!bayInfo.length) return;
+  const x0 = Math.min(...bayInfo.map(b=>b.x)) - (state.mode==='T' ? 100 : 0), x1 = Math.max(...bayInfo.map(b=>b.x + b.len));
+  const width = x1 - x0, c = new THREE.Vector3((x0+x1)/2, 45, bayInfo[0].depth/2);
+  if(state.mode === 'T'){ const d = Math.max(width*1.25, 340); flyTo(c, new THREE.Vector3(c.x + d*0.55, 60 + d*0.42, c.z + d*0.95), instant); }
+  else { const dist = Math.max(width*1.15, 300); flyTo(c, new THREE.Vector3(c.x - dist*0.05, 50 + dist*0.5, c.z + dist*1.0), instant); }
+  $('pals').querySelectorAll('.pal').forEach((b,i) => b.setAttribute('aria-pressed', i===0));
+}
+function focusBay(i){
+  const b = bayInfo[i]; const c = b.center.clone();
+  flyTo(c, new THREE.Vector3(c.x - 95, c.y + 70, c.z + 150));
+  $('pals').querySelectorAll('.pal').forEach((el,k) => el.setAttribute('aria-pressed', k===i+1));
+}
+function resize(){ const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w/Math.max(h,1); camera.updateProjectionMatrix(); requestRender(); }
+new ResizeObserver(resize).observe(stage);
+
+renderDims(); resize(); build(); frameAll(true);
+document.fonts && document.fonts.ready.then(() => { build(); });
+</script>
+</body>
+</html>

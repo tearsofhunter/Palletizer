@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arch Pallet Pack 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* Single theme: graphite shop-floor viewport, instrument-panel side rail. Layout: control rail left, 3D stage right. */
+  --bg:#121518; --panel:#1a1e22; --raise:#22272c; --line:#30363d; --ink:#e8ebee; --muted:#98a2ab; --accent:#f2b33d;
+  --good:#5cc98a; --bad:#ff8f84;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45}
+.app{display:grid;grid-template-columns:350px 1fr;height:100%}
+aside{overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:16px 14px 28px;display:flex;flex-direction:column;gap:14px}
+h1{font-family:var(--display);font-weight:600;font-size:22px;margin:0;text-wrap:balance}
+.sub{color:var(--muted);margin:4px 0 0;font-size:13px}
+.label{font-family:var(--display);font-weight:500;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.card{background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:12px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
+.btn,.seg button,.chips button,.pal{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;cursor:pointer;text-align:left}
+.seg button{padding:7px 9px}
+.seg button b{display:block;font-family:var(--display);font-weight:600;font-size:15px}
+.seg button span{color:var(--muted);font-size:12px}
+.btn{padding:6px 10px;text-align:center}
+.btn.primary{background:var(--accent);color:#1a1405;border-color:var(--accent);font-weight:600}
+[aria-pressed="true"]{border-color:var(--accent)!important;box-shadow:inset 0 0 0 1px var(--accent)}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pals{display:flex;flex-direction:column;gap:6px}
+.pal{padding:8px 10px;display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:baseline;background:var(--raise)}
+.pal .n{font-family:var(--display);font-weight:600;font-size:14px}
+.pal .h{font-family:var(--mono);font-size:12px}
+.pal .d{grid-column:1/-1;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.tall{color:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{padding:5px 9px;display:inline-flex;align-items:center;gap:6px;background:var(--raise)}
+.sw{width:10px;height:10px;border-radius:2px;display:inline-block;flex:none}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:5px 0}
+input[type=range]{accent-color:var(--accent)}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+select,input[type=number],input[type=text]{font:inherit;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+input[type=number]{width:74px;font-family:var(--mono);font-size:13px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.tiles div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 7px}
+.tiles b{display:block;font-family:var(--mono);font-size:14px;font-weight:500}
+.tiles span{color:var(--muted);font-size:11px;line-height:1.2;display:block}
+.checks{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.checks li{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start}
+.pill{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:999px;border:1px solid;white-space:nowrap}
+.ok{color:var(--good);border-color:#2d5a40} .no{color:var(--bad);border-color:#5a2f2c} .warnc{color:var(--accent);border-color:#5a4a22}
+.bar{height:8px;border-radius:999px;background:var(--panel);border:1px solid var(--line);overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--good)}
+.dims{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center;font-size:13px;margin-top:8px}
+.dims label{color:var(--muted)}
+details>summary{cursor:pointer;color:var(--ink);font-family:var(--display);font-weight:500;font-size:14px;list-style:none}
+details>summary::before{content:"▸ ";color:var(--muted)} details[open]>summary::before{content:"▾ "}
+.card dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:8px 0 0;font-size:13px}
+.card dt{color:var(--muted)} .card dd{margin:0;font-variant-numeric:tabular-nums}
+.sel-title{font-family:var(--display);font-weight:600;font-size:17px}
+.hint{color:var(--muted);font-size:12px}
+.msg{font-size:12px;margin-top:6px}
+.note{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+.stepbar{display:flex;gap:6px;align-items:center;margin-top:6px}
+.stepbar input{flex:1}
+#stepText{font-size:13px;margin-top:6px;min-height:2.6em}
+#stage{position:relative;min-height:0;min-width:0}
+#stage canvas{display:block;width:100%;height:100%}
+#tip{position:absolute;pointer-events:none;background:rgba(18,21,24,.94);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12px;max-width:260px;display:none}
+#tip b{font-family:var(--display);font-size:14px}
+.legend-float{position:absolute;left:12px;bottom:12px;background:rgba(26,30,34,.9);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px 12px;max-width:calc(100% - 24px)}
+.legend-float span{display:inline-flex;align-items:center;gap:6px}
+.top-hint{position:absolute;right:12px;top:10px;font-size:12px;color:var(--muted);background:rgba(26,30,34,.85);padding:5px 9px;border-radius:6px}
+#modal{position:absolute;inset:0;background:rgba(10,12,14,.72);display:none;align-items:center;justify-content:center;padding:20px;z-index:5}
+#modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(980px,100%);max-height:100%;display:flex;flex-direction:column}
+#modal header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+#modal h2{font-family:var(--display);font-size:18px;margin:0}
+#modal .scroll{overflow:auto;padding:0 14px 14px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:500}
+@media (max-width:760px){
+  .app{grid-template-columns:1fr;grid-template-rows:56% 44%}
+  aside{order:2;border-right:0;border-top:1px solid var(--line)}
+}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div>
+    <h1>Arch pallet pack</h1>
+    <p class="sub">30 aluminum arches as 116 bolt-together sections plus 24 bottom bars. Pack them on LTL pallets or in a rental or box truck.</p>
+  </div>
+
+  <div class="seg" role="group" aria-label="Shipping mode">
+    <button id="modeP" aria-pressed="true"><b>Pallets</b><span>LTL freight</span></button>
+    <button id="modeT" aria-pressed="false"><b>Truck</b><span>U-Haul or box truck</span></button>
+  </div>
+
+  <section class="card">
+    <p class="label" style="margin-bottom:4px">Velcro clearance</p>
+    <div class="row"><label for="clear">Space on each side of a piece</label><output id="clearOut" class="mono" for="clear">⅛"</output></div>
+    <input id="clear" type="range" min="0" max="1" step="0.0625" value="0.125" style="width:100%">
+    <p class="label" style="margin:10px 0 6px">Comb teeth between slots</p>
+    <div class="seg" role="group" aria-label="Comb teeth">
+      <button id="toothT" aria-pressed="true"><b>⅜" UHMW</b><span>tight</span></button>
+      <button id="toothS" aria-pressed="false"><b>½" plywood</b><span>standard</span></button>
+    </div>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section id="palletPanel">
+    <p class="label">Pallets · click to zoom</p>
+    <div class="pals" id="pals"></div>
+  </section>
+
+  <section id="truckPanel" class="card" hidden>
+    <p class="label">Vehicle</p>
+    <select id="vehicle" style="width:100%"></select>
+    <ul class="checks" id="truckChecks"></ul>
+    <details style="margin-top:10px" id="dimDetails">
+      <summary>Edit truck dimensions</summary>
+      <div class="dims" id="dims"></div>
+      <p class="hint" style="margin:8px 0 0">U-Haul sizes are from U-Haul's published specs. The 26' deck height and all wheel-well sizes are estimates; measure your truck and edit them here.</p>
+    </details>
+  </section>
+
+  <section class="card">
+    <p class="label">Load sequence</p>
+    <div class="row"><label for="prio">Unload first (load last)</label>
+      <select id="prio"><option value="">No preference</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></div>
+    <div class="stepbar">
+      <button class="btn" id="stepPrev" aria-label="Previous step">◀</button>
+      <button class="btn" id="stepPlay" style="min-width:64px">Play</button>
+      <button class="btn" id="stepNext" aria-label="Next step">▶</button>
+      <input id="step" type="range" min="0" max="1" value="1" aria-label="Loading step">
+    </div>
+    <div id="stepText" class="hint">Showing the finished load. Drag the slider or press Play to watch it load piece by piece.</div>
+  </section>
+
+  <section>
+    <p class="label">Highlight an arch</p>
+    <div class="chips" id="arches"></div>
+  </section>
+
+  <section class="card" id="selcard">
+    <div class="sel-title" id="selTitle">Click any piece</div>
+    <div class="hint" id="selHint">Hover to identify a section; click to pin its details and move it.</div>
+    <dl id="selDl" hidden></dl>
+    <div id="moveBox" hidden style="margin-top:10px">
+      <p class="label" style="margin-bottom:6px">Move this piece</p>
+      <div class="row" style="justify-content:flex-start;gap:6px;flex-wrap:wrap">
+        <select id="moveBay"></select>
+        <label for="moveSlot" class="hint">slot</label><input id="moveSlot" type="number" min="1" value="1">
+        <button class="btn primary" id="moveGo">Move</button>
+      </div>
+      <div class="msg" id="moveMsg"></div>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="hint" id="movesCount">No manual moves</span><button class="btn" id="movesReset">Undo moves</button></div>
+  </section>
+
+  <div class="seg">
+    <button class="btn" id="openList">Packing list</button>
+    <button class="btn" id="openWeights">Weight &amp; balance</button>
+  </div>
+
+  <details class="card">
+    <summary>Cost comparison</summary>
+    <div class="dims">
+      <label for="costPallet">LTL quote per pallet ($)</label><input id="costPallet" type="number" min="0" step="10" placeholder="e.g. 450">
+      <label for="costRack">Rack build per pallet ($)</label><input id="costRack" type="number" min="0" step="10" placeholder="e.g. 250">
+      <label for="costTruck">Truck rental, all-in ($)</label><input id="costTruck" type="number" min="0" step="10" placeholder="e.g. 900">
+      <label for="costTruckRack">In-truck racks ($)</label><input id="costTruckRack" type="number" min="0" step="10" placeholder="e.g. 400">
+    </div>
+    <div id="costOut" class="msg hint">Enter your quotes to compare. Pallet count comes from the current pallet plan.</div>
+  </details>
+
+  <details class="card">
+    <summary>View options</summary>
+    <div class="row"><label for="spread">Spread slots apart</label><input id="spread" type="range" min="1" max="5" step="0.25" value="1" style="width:140px"></div>
+    <div class="row"><label for="rack">Rack, pallet and truck body</label><input id="rack" type="checkbox" checked></div>
+    <div class="row"><label for="sup">Ribs, foam and spacers</label><input id="sup" type="checkbox" checked></div>
+    <div class="row"><label for="velc">Velcro clearance layer</label><input id="velc" type="checkbox" checked></div>
+    <div class="row"><label for="limit">7'-6" line on pallets</label><input id="limit" type="checkbox" checked></div>
+    <div class="row"><label for="colorby">Color by</label><select id="colorby"><option value="arch">Arch (A–E)</option><option value="sec">Section type</option></select></div>
+  </details>
+
+  <p class="note">Section shapes, sizes and weights come from your Rhino file (aluminum only, 0.125" wall tube). Racks, ribs, foam and pallets are schematic. Drag to orbit, right-drag to pan, scroll to zoom.</p>
+</aside>
+<div id="stage">
+  <div id="tip"></div>
+  <div class="top-hint" id="topHint">Drag to orbit · scroll to zoom</div>
+  <div class="legend-float" id="legend"></div>
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="box">
+      <header><h2 id="modalTitle">Packing list</h2><div style="display:flex;gap:6px"><button class="btn" id="modalCopy">Copy for spreadsheet</button><button class="btn" id="modalClose">Close</button></div></header>
+      <div class="hint" id="modalSub" style="padding:8px 14px 0"></div>
+      <div class="scroll" id="modalBody"></div>
+    </div>
+  </div>
+</div>
+</div>
+<script type="application/json" id="data">
+{"types":{"A1":{"desc":"straight leg","lb":7.91,"pieces":[{"k":"P","p":[[-4.007,-42.868],[3.968,-42.868],[4.007,-42.618],[-3.968,-42.618]]},{"k":"S","p":[[-4.007,-42.618],[-3.006,-42.585],[-3.006,42.609],[-4.007,42.576]]},{"k":"S","p":[[3.006,-42.618],[4.007,-42.585],[4.007,42.609],[3.005,42.576]]},{"k":"P","p":[[4.007,42.859],[-3.968,42.859],[-4.007,42.609],[3.968,42.609]]},{"k":"R","p":[[-3.006,-0.379],[2.989,-0.379],[3.006,0.621],[-2.989,0.621]]}],"hull":[[-4.007,-42.868],[3.968,-42.868],[4.007,-42.618],[4.007,42.859],[-3.968,42.859],[-4.007,42.609]]},"A2":{"desc":"lower curve","lb":7.73,"pieces":[{"k":"LI","p":[[14.442,38.258],[12.252,33.565],[10.206,28.807],[8.307,23.99],[6.555,19.116],[4.954,14.191],[3.504,9.22],[2.207,4.206],[1.063,-0.845],[0.055,-6.039],[-0.791,-11.262],[-1.473,-16.51],[-1.995,-21.832],[-2.241,-25.256],[-2.231,-40.971],[-1.239,-40.956],[-1.238,-25.232],[-1.0,-21.928],[-0.484,-16.665],[0.197,-11.42],[1.033,-6.252],[2.04,-1.061],[3.184,3.993],[4.469,8.958],[5.905,13.881],[7.49,18.758],[9.242,23.635],[11.122,28.406],[13.169,33.166],[15.338,37.813]]},{"k":"LO","p":[[-8.252,-25.241],[-7.967,-21.251],[-7.598,-17.326],[-7.133,-13.353],[-6.578,-9.391],[-5.933,-5.443],[-5.197,-1.511],[-4.373,2.403],[-3.459,6.297],[-2.291,10.776],[-1.022,15.168],[0.362,19.525],[1.877,23.898],[3.508,28.23],[5.23,32.465],[7.086,36.706],[9.028,40.844],[9.039,40.891],[8.16,41.319],[6.309,37.413],[4.382,33.026],[2.616,28.695],[0.966,24.318],[-0.55,19.953],[-1.967,15.496],[-3.266,11.002],[-4.431,6.532],[-5.987,-0.368],[-7.274,-7.381],[-8.277,-14.44],[-8.994,-21.533],[-9.253,-25.232],[-9.254,-40.922],[-9.246,-40.971],[-8.252,-40.931]]},{"k":"R","p":[[-4.565,1.526],[-4.76,0.545],[1.092,-0.709],[1.287,0.272]]},{"k":"P","p":[[-1.239,-41.221],[-1.278,-40.971],[-9.254,-40.971],[-9.214,-41.221]]},{"k":"P","p":[[8.149,41.324],[15.312,37.834],[15.448,38.04],[8.292,41.533]]}],"hull":[[-9.254,-40.971],[-9.214,-41.221],[-1.239,-41.221],[15.448,38.04],[8.292,41.533],[8.149,41.324],[6.309,37.413],[4.382,33.026],[2.616,28.695],[0.966,24.318],[-0.55,19.953],[-1.967,15.496],[-3.266,11.002],[-4.431,6.532],[-5.987,-0.368],[-7.274,-7.381],[-8.277,-14.44],[-8.994,-21.533],[-9.253,-25.232],[-9.254,-40.922]]},"A3":{"desc":"upper curve to apex","lb":7.58,"pieces":[{"k":"UI","p":[[27.602,24.789],[23.878,21.805],[20.199,18.682],[16.611,15.456],[13.116,12.129],[9.717,8.704],[6.417,5.184],[3.254,1.611],[0.158,-2.091],[-2.83,-5.88],[-5.709,-9.752],[-8.477,-13.704],[-11.131,-17.734],[-13.697,-21.883],[-16.116,-26.058],[-18.488,-30.441],[-20.504,-34.457],[-19.611,-34.877],[-17.473,-30.658],[-15.192,-26.456],[-12.793,-22.321],[-10.278,-18.256],[-7.648,-14.264],[-4.906,-10.348],[-2.054,-6.511],[0.906,-2.757],[3.938,0.873],[7.037,4.379],[10.233,7.798],[13.522,11.127],[16.903,14.363],[20.372,17.504],[23.889,20.515],[27.602,23.524]]},{"k":"UO","p":[[-25.91,-31.823],[-23.625,-27.316],[-21.182,-22.827],[-18.64,-18.46],[-15.972,-14.168],[-13.182,-9.954],[-10.238,-5.776],[-7.209,-1.732],[-4.065,2.224],[-1.108,5.74],[1.94,9.178],[5.076,12.535],[8.3,15.808],[12.87,20.168],[17.637,24.399],[22.511,28.418],[27.572,32.292],[27.602,33.548],[23.215,30.245],[18.796,26.685],[14.536,23.023],[10.395,19.227],[6.377,15.301],[2.487,11.249],[-1.273,7.076],[-4.862,2.829],[-8.698,-2.03],[-12.361,-7.021],[-15.815,-12.089],[-19.121,-17.323],[-21.164,-20.776],[-23.101,-24.224],[-24.987,-27.766],[-26.792,-31.35]]},{"k":"P","p":[[-26.918,-31.61],[-19.756,-35.1],[-19.619,-34.894],[-26.775,-31.402]]},{"k":"R","p":[[-3.3,3.152],[-2.647,3.91],[1.947,0.074],[1.294,-0.684]]},{"k":"PA","p":[[27.602,33.555],[27.606,23.522],[27.852,23.75],[27.852,33.687],[27.851,33.736]]}],"hull":[[-26.918,-31.61],[-19.756,-35.1],[27.852,23.75],[27.852,33.687],[27.851,33.736],[27.602,33.555],[23.215,30.245],[18.796,26.685],[14.536,23.023],[10.395,19.227],[6.377,15.301],[2.487,11.249],[-1.273,7.076],[-4.862,2.829],[-8.698,-2.03],[-12.361,-7.021],[-15.815,-12.089],[-19.121,-17.323],[-21.164,-20.776],[-23.101,-24.224],[-24.987,-27.766],[-26.792,-31.35]]},"B1":{"desc":"straight leg","lb":7.5,"pieces":[{"k":"R","p":[[-3.005,-0.379],[2.98,-0.379],[2.997,0.621],[-2.989,0.621]]},{"k":"P","p":[[-4.006,40.168],[3.955,40.168],[3.994,40.418],[-3.968,40.418]]},{"k":"S","p":[[3.994,40.168],[2.994,40.138],[3.0,-40.176],[4.0,-40.146]]},{"k":"P","p":[[-4.0,-40.427],[3.962,-40.426],[4.0,-40.176],[-3.961,-40.177]]},{"k":"S","p":[[-4.0,-40.177],[-3.002,-40.144],[-3.009,40.168],[-4.006,40.135]]}],"hull":[[-4.006,40.168],[-4.0,-40.427],[3.962,-40.426],[4.0,-40.176],[3.994,40.168],[3.994,40.418],[-3.968,40.418]]},"B2":{"desc":"lower curve","lb":7.33,"pieces":[{"k":"LI","p":[[0.105,-17.991],[0.66,-11.723],[1.458,-5.484],[2.495,0.709],[3.78,6.89],[4.682,10.633],[5.662,14.315],[6.745,18.026],[7.904,21.67],[9.151,25.289],[10.485,28.881],[11.906,32.441],[13.412,35.968],[12.529,36.395],[10.738,32.244],[8.788,27.231],[7.075,22.359],[5.506,17.393],[4.114,12.441],[2.883,7.462],[1.814,2.464],[0.897,-2.596],[0.316,-6.392],[-0.179,-10.237],[-0.581,-14.077],[-0.895,-17.957],[-0.893,-38.855],[0.107,-38.846]]},{"k":"LO","p":[[6.074,39.258],[4.12,34.626],[2.306,29.941],[0.634,25.21],[-0.893,20.44],[-2.289,15.591],[-3.536,10.715],[-4.635,5.821],[-5.594,0.868],[-6.366,-3.849],[-7.01,-8.611],[-7.521,-13.412],[-7.894,-18.199],[-7.854,-38.859],[-6.902,-38.859],[-6.896,-38.804],[-6.897,-18.284],[-6.526,-13.524],[-6.025,-8.802],[-5.388,-4.071],[-4.613,0.662],[-3.657,5.603],[-2.562,10.479],[-1.318,15.337],[0.057,20.117],[1.578,24.865],[3.241,29.574],[5.047,34.236],[6.992,38.845]]},{"k":"R","p":[[-4.666,0.367],[-4.477,1.349],[1.4,0.294],[1.211,-0.688]]},{"k":"P","p":[[13.526,36.226],[6.175,39.485],[6.076,39.262],[13.421,35.999]]},{"k":"P","p":[[-7.893,-39.109],[0.068,-39.109],[0.107,-38.859],[-7.855,-38.859]]}],"hull":[[-7.894,-18.199],[-7.893,-39.109],[0.068,-39.109],[13.526,36.226],[6.175,39.485],[6.076,39.262],[4.12,34.626],[2.306,29.941],[0.634,25.21],[-0.893,20.44],[-2.289,15.591],[-3.536,10.715],[-4.635,5.821],[-5.594,0.868],[-6.366,-3.849],[-7.01,-8.611],[-7.521,-13.412]]},"B3":{"desc":"upper curve to apex","lb":7.13,"pieces":[{"k":"UI","p":[[24.64,23.337],[21.295,20.452],[18.047,17.485],[14.867,14.406],[11.758,11.218],[8.759,7.96],[5.84,4.601],[3.036,1.183],[0.318,-2.328],[-2.308,-5.928],[-4.839,-9.614],[-7.271,-13.38],[-9.576,-17.18],[-11.801,-21.094],[-13.895,-25.031],[-15.88,-29.03],[-17.754,-33.085],[-16.831,-33.487],[-14.968,-29.458],[-12.995,-25.485],[-10.913,-21.573],[-8.702,-17.686],[-6.411,-13.911],[-3.994,-10.172],[-1.507,-6.551],[1.1,-2.976],[3.74,0.438],[6.463,3.764],[9.295,7.033],[12.203,10.206],[15.183,13.28],[18.263,16.284],[21.406,19.183],[24.644,22.003]]},{"k":"UO","p":[[24.648,32.553],[20.765,29.431],[16.953,26.163],[13.257,22.788],[9.68,19.312],[6.192,15.706],[2.833,12.011],[-0.426,8.195],[-3.58,4.262],[-6.624,0.218],[-9.551,-3.933],[-12.357,-8.185],[-15.01,-12.487],[-17.586,-16.968],[-20.025,-21.534],[-22.48,-26.509],[-24.032,-29.886],[-24.151,-30.256],[-23.256,-30.62],[-21.181,-26.131],[-18.972,-21.715],[-16.61,-17.332],[-14.099,-12.994],[-11.445,-8.712],[-8.684,-4.545],[-5.794,-0.456],[-2.781,3.547],[0.311,7.408],[3.509,11.164],[6.803,14.808],[10.186,18.331],[13.69,21.765],[17.266,25.06],[20.904,28.211],[24.639,31.246]]},{"k":"R","p":[[-2.576,3.81],[-3.173,3.008],[1.579,-0.676],[2.177,0.127]]},{"k":"PA","p":[[24.898,32.748],[24.648,32.519],[24.649,22.024],[24.899,22.252]]},{"k":"P","p":[[-16.837,-33.5],[-24.189,-30.24],[-24.288,-30.464],[-16.943,-33.727]]}],"hull":[[-24.288,-30.464],[-16.943,-33.727],[24.899,22.252],[24.898,32.748],[24.648,32.553],[20.765,29.431],[16.953,26.163],[13.257,22.788],[9.68,19.312],[6.192,15.706],[2.833,12.011],[-0.426,8.195],[-3.58,4.262],[-6.624,0.218],[-9.551,-3.933],[-12.357,-8.185],[-15.01,-12.487],[-17.586,-16.968],[-20.025,-21.534],[-22.48,-26.509],[-24.032,-29.886],[-24.189,-30.24]]},"C1":{"desc":"straight leg","lb":7.03,"pieces":[{"k":"S","p":[[-4.007,37.444],[-3.01,37.43],[-3.004,-37.439],[-4.001,-37.425]]},{"k":"S","p":[[3.999,-37.439],[2.999,-37.427],[2.993,37.445],[3.993,37.433]]},{"k":"P","p":[[-4.007,37.444],[-3.968,37.694],[3.993,37.695],[3.954,37.445]]},{"k":"R","p":[[2.996,0.503],[2.981,-0.497],[-3.007,-0.498],[-2.991,0.502]]},{"k":"P","p":[[-4.001,-37.69],[3.961,-37.69],[3.999,-37.439],[-3.963,-37.439]]}],"hull":[[-4.007,37.444],[-4.001,-37.69],[3.961,-37.69],[3.999,-37.439],[3.993,37.695],[-3.968,37.694]]},"C2":{"desc":"lower curve","lb":6.9,"pieces":[{"k":"LI","p":[[0.348,-10.85],[0.874,-4.998],[1.62,0.825],[2.583,6.602],[3.761,12.321],[5.159,18.01],[6.777,23.655],[8.629,29.283],[10.575,34.482],[11.496,34.097],[9.873,29.771],[8.37,25.356],[7.006,20.9],[5.78,16.41],[4.684,11.852],[3.732,7.276],[2.921,2.689],[2.247,-1.944],[1.729,-6.449],[1.348,-10.907],[1.35,-36.424],[0.35,-36.429]]},{"k":"LO","p":[[3.978,37.087],[2.382,32.81],[0.895,28.448],[-0.465,24.05],[-1.696,19.622],[-2.809,15.127],[-3.79,10.614],[-4.64,6.09],[-5.365,1.519],[-6.121,-4.514],[-6.652,-10.575],[-6.632,-36.439],[-5.664,-36.439],[-5.653,-36.39],[-5.654,-10.632],[-5.128,-4.643],[-4.376,1.364],[-3.658,5.885],[-2.809,10.4],[-1.829,14.905],[-0.729,19.344],[0.499,23.759],[1.841,28.096],[3.323,32.444],[4.914,36.702]]},{"k":"P","p":[[4.069,37.32],[4.012,37.074],[11.517,34.151],[11.558,34.362]]},{"k":"P","p":[[-6.65,-36.689],[-6.611,-36.439],[1.35,-36.439],[1.311,-36.689]]},{"k":"R","p":[[1.565,0.448],[1.409,-0.539],[-4.525,0.301],[-4.369,1.289]]}],"hull":[[-6.652,-10.575],[-6.65,-36.689],[1.311,-36.689],[1.35,-36.439],[11.558,34.362],[4.069,37.32],[3.978,37.087],[2.382,32.81],[0.895,28.448],[-0.465,24.05],[-1.696,19.622],[-2.809,15.127],[-3.79,10.614],[-4.64,6.09],[-5.365,1.519],[-6.121,-4.514]]},"C3":{"desc":"upper curve to apex","lb":6.67,"pieces":[{"k":"UI","p":[[21.548,21.786],[18.603,19.02],[15.75,16.177],[12.961,13.23],[10.27,10.217],[7.65,7.107],[5.133,3.939],[2.695,0.683],[0.338,-2.657],[-1.932,-6.079],[-4.114,-9.578],[-6.203,-13.15],[-8.176,-16.75],[-10.093,-20.496],[-11.907,-24.303],[-13.724,-28.423],[-15.011,-31.637],[-14.095,-31.997],[-12.529,-28.203],[-10.861,-24.458],[-9.112,-20.806],[-7.247,-17.172],[-5.286,-13.602],[-3.234,-10.098],[-1.091,-6.666],[1.137,-3.308],[3.399,-0.098],[5.763,3.066],[8.201,6.147],[10.709,9.141],[13.313,12.077],[15.98,14.919],[18.736,17.693],[21.549,20.368]]},{"k":"UO","p":[[-21.622,-29.026],[-20.689,-29.395],[-20.664,-29.354],[-18.856,-24.962],[-16.941,-20.681],[-14.901,-16.466],[-12.713,-12.276],[-10.432,-8.212],[-8.007,-4.187],[-5.47,-0.254],[-2.823,3.582],[-0.137,7.23],[2.676,10.817],[5.581,14.295],[8.608,17.699],[11.68,20.946],[14.866,24.11],[18.122,27.149],[21.556,30.161],[21.537,31.511],[18.063,28.503],[14.659,25.357],[11.363,22.109],[8.148,18.732],[5.05,15.265],[2.044,11.678],[-0.836,8.013],[-3.617,4.24],[-6.291,0.363],[-8.83,-3.572],[-11.281,-7.64],[-13.589,-11.753],[-15.799,-15.989],[-17.862,-20.255],[-19.798,-24.588]]},{"k":"PA","p":[[21.806,31.736],[21.556,31.485],[21.557,20.382],[21.807,20.633]]},{"k":"P","p":[[-21.622,-29.026],[-21.679,-29.272],[-14.174,-32.195],[-14.133,-31.984]]},{"k":"R2","p":[[2.253,0.072],[1.669,-0.74],[-3.348,2.841],[-2.764,3.653]]}],"hull":[[-21.679,-29.272],[-14.174,-32.195],[21.807,20.633],[21.806,31.736],[21.537,31.511],[18.063,28.503],[14.659,25.357],[11.363,22.109],[8.148,18.732],[5.05,15.265],[2.044,11.678],[-0.836,8.013],[-3.617,4.24],[-6.291,0.363],[-8.83,-3.572],[-11.281,-7.64],[-13.589,-11.753],[-15.799,-15.989],[-17.862,-20.255],[-19.798,-24.588],[-21.622,-29.026]]},"D1":{"desc":"half-arch (curve + leg)","lb":8.46,"pieces":[{"k":"CI","p":[[-5.11,-23.856],[-4.777,-20.126],[-4.263,-16.417],[-3.569,-12.737],[-2.697,-9.095],[-1.649,-5.5],[-0.427,-1.96],[0.965,1.516],[2.547,4.965],[4.129,8.026],[5.846,11.012],[7.694,13.919],[9.701,16.781],[12.404,20.244],[15.301,23.548],[18.382,26.681],[21.706,29.701],[21.689,30.988],[19.787,29.344],[17.938,27.64],[14.447,24.097],[11.189,20.339],[8.177,16.381],[5.424,12.239],[4.134,10.081],[2.915,7.882],[0.714,3.422],[-1.198,-1.17],[-2.052,-3.535],[-2.846,-5.978],[-3.558,-8.446],[-4.176,-10.884],[-4.716,-13.339],[-5.185,-15.865],[-5.57,-18.405],[-5.872,-20.957],[-6.111,-23.844],[-6.11,-39.638],[-6.097,-39.681],[-5.11,-39.676]]},{"k":"CO","p":[[21.706,39.883],[21.675,38.612],[19.349,36.823],[17.133,34.993],[14.937,33.047],[12.852,31.068],[10.795,28.975],[8.813,26.812],[6.907,24.581],[5.117,22.332],[2.14,18.204],[-0.582,13.903],[-3.038,9.446],[-5.22,4.848],[-7.078,0.238],[-8.659,-4.473],[-9.96,-9.27],[-10.974,-14.135],[-11.692,-18.992],[-12.121,-23.823],[-12.125,-39.639],[-12.145,-39.681],[-13.125,-39.68],[-13.125,-23.868],[-12.794,-19.848],[-12.262,-15.779],[-11.794,-13.061],[-11.251,-10.418],[-10.61,-7.736],[-9.882,-5.078],[-9.07,-2.449],[-8.174,0.151],[-7.194,2.721],[-6.13,5.262],[-4.956,7.825],[-3.726,10.294],[-2.386,12.775],[-0.966,15.209],[0.532,17.591],[2.107,19.92],[3.756,22.194],[5.483,24.415],[7.284,26.581],[9.159,28.688],[11.06,30.69],[13.07,32.67],[15.097,34.541],[17.228,36.383],[19.368,38.112]]},{"k":"PA","p":[[21.956,29.905],[21.956,40.051],[21.706,39.844],[21.706,29.698]]},{"k":"R","p":[[4.03,20.888],[4.639,21.681],[9.441,18.109],[8.832,17.316]]},{"k":"R","p":[[-7.376,-0.579],[-7.02,0.356],[-1.396,-1.692],[-1.752,-2.626]]},{"k":"R","p":[[-12.123,-24.856],[-6.141,-24.856],[-6.112,-23.856],[-12.094,-23.856]]},{"k":"R","p":[[-12.125,-39.681],[-6.127,-39.681],[-6.11,-38.681],[-12.108,-38.681]]}],"hull":[[-13.125,-39.68],[-12.145,-39.681],[-6.097,-39.681],[-5.11,-39.676],[21.956,29.905],[21.956,40.051],[21.706,39.883],[19.368,38.112],[17.228,36.383],[15.097,34.541],[13.07,32.67],[11.06,30.69],[9.159,28.688],[7.284,26.581],[5.483,24.415],[3.756,22.194],[2.107,19.92],[0.532,17.591],[-0.966,15.209],[-2.386,12.775],[-3.726,10.294],[-4.956,7.825],[-6.13,5.262],[-7.194,2.721],[-8.174,0.151],[-9.07,-2.449],[-9.882,-5.078],[-10.61,-7.736],[-11.251,-10.418],[-11.794,-13.061],[-12.262,-15.779],[-12.794,-19.848],[-13.125,-23.868]]},"E1":{"desc":"straight leg","lb":7.52,"pieces":[{"k":"R","p":[[-3.008,-13.362],[2.99,-13.362],[3.008,-12.362],[-2.99,-12.362]]},{"k":"R","p":[[-3.008,12.595],[2.99,12.595],[3.008,13.595],[-2.99,13.595]]},{"k":"S","p":[[-3.008,38.801],[-4.003,38.801],[-4.008,38.753],[-4.008,-38.818],[-3.012,-38.818],[-3.008,-38.77]]},{"k":"S","p":[[4.008,38.801],[4.008,-38.77],[4.003,-38.818],[3.008,-38.818],[3.008,38.753],[3.012,38.801]]},{"k":"P","p":[[-4.008,38.801],[3.968,38.801],[4.008,39.051],[-3.968,39.051]]},{"k":"P","p":[[4.008,-38.818],[-3.968,-38.818],[-4.008,-39.068],[3.968,-39.068]]}],"hull":[[-4.008,-39.068],[3.968,-39.068],[4.008,-38.818],[4.008,-38.77],[4.008,38.801],[4.008,39.051],[-3.968,39.051],[-4.008,38.801],[-4.008,38.753]]},"E2":{"desc":"curve to apex","lb":9.28,"pieces":[{"k":"CI","p":[[-4.356,-19.725],[-4.026,-16.023],[-3.508,-12.286],[-2.82,-8.633],[-1.943,-4.964],[-0.886,-1.342],[0.347,2.223],[1.753,5.724],[3.304,9.102],[4.881,12.153],[6.622,15.18],[8.498,18.124],[10.472,20.935],[13.176,24.396],[16.073,27.697],[19.194,30.867],[22.45,33.815],[22.46,35.114],[20.607,33.534],[18.524,31.61],[16.598,29.7],[14.698,27.679],[12.911,25.638],[11.196,23.536],[9.555,21.376],[7.991,19.16],[6.504,16.891],[5.128,14.626],[3.801,12.26],[2.557,9.85],[1.398,7.397],[0.324,4.906],[-0.662,2.379],[-1.56,-0.18],[-2.978,-4.968],[-4.074,-9.775],[-4.873,-14.704],[-5.354,-19.674],[-5.356,-45.908],[-4.356,-45.897]]},{"k":"CO","p":[[-11.369,-19.725],[-10.985,-15.268],[-10.364,-10.838],[-9.494,-6.383],[-8.402,-2.045],[-7.081,2.229],[-5.509,6.488],[-3.709,10.656],[-1.718,14.661],[0.346,18.326],[2.591,21.883],[5.051,25.377],[7.643,28.689],[11.031,32.555],[14.601,36.161],[18.382,39.544],[22.46,42.776],[22.46,44.006],[19.97,42.123],[17.592,40.185],[15.281,38.159],[13.043,36.048],[10.882,33.856],[8.803,31.588],[6.808,29.249],[4.861,26.788],[3.01,24.263],[1.288,21.724],[-0.343,19.123],[-1.88,16.461],[-3.321,13.744],[-4.663,10.977],[-5.902,8.165],[-7.062,5.25],[-8.048,2.49],[-8.938,-0.302],[-9.732,-3.127],[-10.428,-5.981],[-11.026,-8.859],[-11.525,-11.756],[-11.922,-14.666],[-12.218,-17.584],[-12.371,-19.758],[-12.371,-45.866],[-12.367,-45.931],[-11.371,-45.903]]},{"k":"R","p":[[4.784,25.019],[5.393,25.812],[10.196,22.239],[9.587,21.446]]},{"k":"R","p":[[-6.622,3.552],[-6.265,4.486],[-0.64,2.439],[-0.997,1.504]]},{"k":"P","p":[[-12.371,-46.181],[-4.395,-46.181],[-4.356,-45.931],[-12.332,-45.931]]},{"k":"R","p":[[-11.373,-20.725],[-5.375,-20.725],[-5.358,-19.725],[-11.356,-19.725]]},{"k":"PA","p":[[22.71,44.2],[22.46,44.011],[22.46,33.829],[22.71,34.071]]}],"hull":[[-12.371,-45.866],[-12.371,-46.181],[-4.395,-46.181],[22.71,34.071],[22.71,44.2],[19.97,42.123],[17.592,40.185],[15.281,38.159],[13.043,36.048],[10.882,33.856],[8.803,31.588],[6.808,29.249],[4.861,26.788],[3.01,24.263],[1.288,21.724],[-0.343,19.123],[-1.88,16.461],[-3.321,13.744],[-4.663,10.977],[-5.902,8.165],[-7.062,5.25],[-8.048,2.49],[-8.938,-0.302],[-9.732,-3.127],[-10.428,-5.981],[-11.026,-8.859],[-11.525,-11.756],[-11.922,-14.666],[-12.218,-17.584],[-12.371,-19.758]]},"BB-D":{"desc":"bundle of 8 bottom bars (D)","lb":13.69,"bar":8,"len":70.13},"BB-E":{"desc":"bundle of 16 bottom bars (E)","lb":27.38,"bar":16,"len":70.13}},"counts":{"A1":4,"A2":4,"A3":4,"B1":4,"B2":4,"B3":4,"C1":4,"C2":4,"C3":4,"D1":16,"E1":32,"E2":32,"BB-D":1,"BB-E":1}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const TY = DATA.types, COUNTS = DATA.counts;
+const $ = id => document.getElementById(id);
+const stage = $('stage'), tip = $('tip');
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ---------------- constants ----------------
+const ARCH_COL = { A:'#5aa9ff', B:'#3fcf9e', C:'#b691ff', D:'#ff8a5b', E:'#f2c94c' };
+const SEC_COL = { leg:'#4a8fd6', lower:'#5cb85c', upper:'#f0883e', half:'#b691ff', bar:'#e5534b' };
+const SEC_NAME = { leg:'Straight leg', lower:'Lower curve', upper:'Upper curve / to apex', half:'D half-arch', bar:'Bottom-bar bundle' };
+const QTY = { A:2, B:2, C:2, D:8, E:16 };
+const SPACER = 1.75;                 // fixed spacer block between pieces sharing a slot
+const PAL = { W:48, D:40, POST:1.5, RACK_IN:45, DEPTH_IN:37, STD_CLEAR:82 };
+const VEHICLES = {
+  uh10:  { name:"U-Haul 10' truck",  L:118, W:75, H:73, insideL:119, doorW:71, doorH:67, deckH:29, ramp:0,  maxLoad:2850,  wells:true,  atticH:0,  liftgate:false },
+  uh15:  { name:"U-Haul 15' truck",  L:149, W:92, H:86, insideL:180, doorW:87, doorH:77, deckH:33, ramp:26, maxLoad:6385,  wells:true,  atticH:31, liftgate:false },
+  uh20:  { name:"U-Haul 20' truck",  L:202, W:92, H:85, insideL:233, doorW:87, doorH:77, deckH:35, ramp:26, maxLoad:5700,  wells:false, atticH:31, liftgate:false },
+  uh26:  { name:"U-Haul 26' truck",  L:281, W:98, H:99, insideL:314, doorW:93, doorH:82, deckH:40, ramp:31, maxLoad:12859, wells:false, atticH:39, liftgate:false },
+  box26: { name:"Box truck (enter your own numbers)", L:312, W:96, H:96, insideL:312, doorW:90, doorH:86, deckH:48, ramp:0, maxLoad:10000, wells:false, atticH:0, liftgate:true }
+};
+const DIM_FIELDS = [
+  ['L','Floor (deck) length'],['W','Inside width'],['H','Inside height'],['doorW','Door width'],['doorH','Door height'],
+  ['deckH','Deck height from ground'],['maxLoad','Max load (lb)'],['ramp','Ramp width (0 = none)'],
+  ['wellL','Wheel-well length'],['wellW','Wheel-well width'],['wellH','Wheel-well height'],['wellX','Wheel-well center from front']
+];
+function vehDefaults(key){ const v = Object.assign({}, VEHICLES[key]); Object.assign(v, { wellL:36, wellW:9, wellH:10, wellX:Math.round(v.L*0.62) }); return v; }
+
+const state = { mode:'P', tooth:0.375, clear:0.125, spread:1, rack:true, sup:true, velc:true, limit:true, color:'arch', arch:'all',
+  sel:null, vehicle:'uh26', veh:vehDefaults('uh26'), prio:'', step:null, moves:{ P:{}, T:{} } };
+
+function secKind(t){ if(t.startsWith('BB')) return 'bar'; if(t==='D1') return 'half'; if(t==='E2') return 'upper'; return {1:'leg',2:'lower',3:'upper'}[t[1]]; }
+function archOf(t){ return t.startsWith('BB') ? t.slice(3) : t[0]; }
+const ITEMS = []; Object.entries(COUNTS).forEach(([t,n]) => { for(let i=1;i<=n;i++) ITEMS.push({ uid:`${t}#${i}`, type:t, n:i }); });
+
+// ---------------- formatting ----------------
+function frac(v){
+  const n = Math.round(v*16), whole = Math.floor(n/16), r = n % 16;
+  if(!r) return `${whole}"`;
+  let num = r, den = 16; while(num % 2 === 0){ num/=2; den/=2; }
+  const f = ({ '1/2':'½','1/4':'¼','3/4':'¾','1/8':'⅛','3/8':'⅜','5/8':'⅝','7/8':'⅞' })[`${num}/${den}`] || `-${num}/${den}`;
+  return whole ? `${whole}${f}"` : `${f.replace('-','')}"`;
+}
+function ftin(v){ const ft = Math.floor(Math.round(v*16)/16/12); return `${ft}'-${frac(v - ft*12)}`; }
+const lb = v => `${Math.round(v).toLocaleString()} lb`;
+
+// ---------------- orientation of a section in its slot plane ----------------
+// Each section stands upright in its own slot. We spin it in its plane to the angle that uses the least
+// length along the slot while staying under the slot's clear height.
+const oCache = new Map();
+function orient(type, H){
+  const key = type + '|' + H.toFixed(3); if(oCache.has(key)) return oCache.get(key);
+  const t = TY[type]; let r;
+  if(t.bar){ r = { a:0, w:3, h:t.len, ox:1.5, oy:t.len/2, ok: t.len <= H }; }
+  else {
+    let best = null, low = null;
+    for(let a=0; a<180; a+=0.5){
+      const c = Math.cos(a*Math.PI/180), s = Math.sin(a*Math.PI/180);
+      let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+      for(const [px,py] of t.hull){ const x = px*c - py*s, y = px*s + py*c; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+      const o = { a, w:x1-x0, h:y1-y0, ox:-x0, oy:-y0 };
+      if(o.h <= H && (!best || o.w < best.w - 1e-6)) best = o;
+      if(!low || o.h < low.h) low = o;
+    }
+    r = best ? Object.assign(best, { ok:true }) : Object.assign(low, { ok:false });
+  }
+  oCache.set(key, r); return r;
+}
+function xform(type, o){ // rotated + offset outline points for each piece of a section
+  const c = Math.cos(o.a*Math.PI/180), s = Math.sin(o.a*Math.PI/180);
+  return TY[type].pieces.map(pc => ({ k:pc.k, p:pc.p.map(([x,y]) => [x*c - y*s + o.ox, x*s + y*c + o.oy]) }));
+}
+
+// ---------------- packing ----------------
+function slotGeom(){ const c = state.clear, slotw = 1 + 2*c, pitch = slotw + state.tooth; return { c, slotw, pitch, gap: SPACER + 2*c }; }
+function itemW(type, bay){ return orient(type, bay.clearH).w; }
+function tryPlace(bay, si, it, rear){
+  const slot = bay.slots[si]; if(!slot) return false;
+  const w = itemW(it.type, bay), g = bay.geom.gap;
+  if(!orient(it.type, bay.clearH).ok) return false;
+  for(const seg of slot.segs){
+    if(!rear){
+      const x = seg.front + (seg.nf ? g : 0);
+      if(x + w <= seg.rear - (seg.nr ? g : 0) + 1e-6){ seg.front = x + w; seg.nf++; slot.items.push({ ...it, x, w }); return true; }
+    } else {
+      const x = seg.rear - (seg.nr ? g : 0) - w;
+      if(x >= seg.front + (seg.nf ? g : 0) - 1e-6){ seg.rear = x; seg.nr++; slot.items.push({ ...it, x, w }); return true; }
+    }
+  }
+  return false;
+}
+function firstFit(bays, it, filter, rear){
+  for(let b=0;b<bays.length;b++){ if(filter && !filter(bays[b])) continue;
+    const order = bays[b].order || bays[b].slots.map((_,i)=>i);
+    for(const s of order) if(tryPlace(bays[b], s, it, rear)) return true; }
+  return false;
+}
+function tallClearFor(cap){
+  for(let H=PAL.STD_CLEAR; H<=110; H+=0.25){ if(orient('E2', H).w <= cap) return H; }
+  return 110;
+}
+function newPallet(tall, G){
+  const cap = PAL.RACK_IN - 2*G.c;
+  const clearH = tall ? tallClearFor(cap) : PAL.STD_CLEAR;
+  const maxslots = Math.max(1, Math.floor((PAL.DEPTH_IN - G.slotw)/G.pitch) + 1);
+  const x0 = PAL.POST + G.c, x1 = PAL.W - PAL.POST - G.c;
+  const slots = Array.from({ length:maxslots }, () => ({ items:[], segs:[{ front:x0, rear:x1, nf:0, nr:0 }] }));
+  const deckH = tall ? 4 : 5.5, railT = tall ? 1 : 1.5;
+  const top = deckH + 0.75 + clearH + 0.25 + railT;
+  return { kind:'pallet', tall, clearH, slots, maxslots, geom:G, cap, deckH, railT, top, len:PAL.W, depth:PAL.D };
+}
+function orderOthers(list){
+  const groups = [['A','B','C','BB'], ['D','E']];
+  const rank = it => { const a = archOf(it.type); return a === state.prio ? 2 : (groups[0].includes(a) || it.type.startsWith('BB') ? 0 : 1); };
+  return list.slice().sort((p,q) => rank(p) - rank(q) || (orient(q.type,82).w - orient(p.type,82).w));
+}
+function packPallets(template, moves){
+  const G = slotGeom(); const bays = (template || []).map(t => newPallet(t, G));
+  const placed = new Set(), rejected = [];
+  Object.entries(moves || {}).forEach(([uid, m]) => {
+    const it = ITEMS.find(i => i.uid === uid);
+    if(it && bays[m.bay] && tryPlace(bays[m.bay], m.slot, it)) placed.add(uid); else rejected.push(uid);
+  });
+  const e2 = ITEMS.filter(i => i.type === 'E2' && !placed.has(i.uid));
+  e2.forEach(it => { if(!firstFit(bays, it, b => b.tall)){ bays.push(newPallet(true, G)); tryPlace(bays[bays.length-1], 0, it); } });
+  orderOthers(ITEMS.filter(i => i.type !== 'E2' && !placed.has(i.uid))).forEach(it => {
+    if(!firstFit(bays, it)){ const b = newPallet(false, G); bays.push(b); if(!firstFit([b], it)) b.overflow = (b.overflow||[]).concat(it); }
+  });
+  return { bays, rejected };
+}
+function makeTruckBay(G){
+  const v = state.veh, c = G.c;
+  const clearH = v.H - 1.5 - 1.0 - 0.5;
+  const usableW = v.W - 3;
+  const maxslots = Math.max(1, Math.floor((usableW - G.slotw)/G.pitch) + 1);
+  const x0 = 1.5 + c, x1 = v.L - 2 - c;
+  const slots = [];
+  for(let s=0;s<maxslots;s++) slots.push({ items:[], segs:[] });
+  const mid = (maxslots-1)/2;
+  const order = slots.map((_,i)=>i).sort((a,b) => Math.abs(a-mid) - Math.abs(b-mid) || a - b);   // fill from the centerline out, alternating sides
+  const bay = { kind:'truck', clearH, slots, maxslots, geom:G, len:v.L, depth:v.W, deckH:v.deckH, order };
+  // slot z positions are computed in render; wheel wells block the floor in slots that sit over them
+  slots.forEach((sl, s) => {
+    const zs = 1.5 + state.tooth + s*G.pitch, ze = zs + G.slotw;
+    const overWell = v.wells && (zs < v.wellW || ze > v.W - v.wellW);
+    if(overWell){
+      const a = v.wellX - v.wellL/2 - c, b = v.wellX + v.wellL/2 + c;
+      if(a - x0 > 4) sl.segs.push({ front:x0, rear:a, nf:0, nr:0 });
+      if(x1 - b > 4) sl.segs.push({ front:b, rear:x1, nf:0, nr:0 });
+    } else sl.segs.push({ front:x0, rear:x1, nf:0, nr:0 });
+  });
+  return bay;
+}
+function packTruck(moves){
+  const G = slotGeom(); const bay = makeTruckBay(G); const bays = [bay];
+  const placed = new Set(), rejected = [], left = [];
+  Object.entries(moves || {}).forEach(([uid, m]) => {
+    const it = ITEMS.find(i => i.uid === uid);
+    if(it && tryPlace(bay, m.slot, it)) placed.add(uid); else rejected.push(uid);
+  });
+  const rest = ITEMS.filter(i => !placed.has(i.uid));
+  const byW = (p,q) => itemW(q.type, bay) - itemW(p.type, bay);
+  const pri = rest.filter(i => state.prio && archOf(i.type) === state.prio).sort(byW);
+  const oth = rest.filter(i => !(state.prio && archOf(i.type) === state.prio)).sort(byW);
+  pri.forEach(it => { if(!firstFit(bays, it, null, true)) left.push(it); });   // door end first
+  oth.forEach(it => { if(!firstFit(bays, it)) left.push(it); });               // cab end first
+  return { bays, rejected, left };
+}
+let PLAN = null;
+function makePlan(){
+  let res;
+  if(state.mode === 'P'){
+    const first = packPallets(null, null);
+    const moves = state.moves.P;
+    res = Object.keys(moves).length ? packPallets(first.bays.map(b => b.tall), moves) : first;
+    res.left = [];
+  } else res = packTruck(state.moves.T);
+  res.rejected.forEach(uid => delete state.moves[state.mode][uid]);
+  // ids, loading sequence, weights, CG
+  const seq = [];
+  res.bays.forEach((b, bi) => {
+    b.label = b.kind === 'pallet' ? `P${bi+1}` : 'Truck';
+    b.lb = 0; const cg = [0,0,0];
+    b.slots.forEach((sl, si) => {
+      sl.items.sort((p,q) => p.x - q.x);
+      sl.items.forEach((it, k) => {
+        it.bay = bi; it.slot = si; it.pos = k; it.n = sl.items.length;
+        it.id = `${b.kind==='pallet' ? b.label : 'T'}-${String(si+1).padStart(2,'0')}${String.fromCharCode(97+k)}`;
+        const o = orient(it.type, b.clearH); it.o = o; it.h = o.h;
+        const w = TY[it.type].lb; b.lb += w;
+        cg[0] += w*(it.x + o.ox); cg[1] += w*(o.oy); cg[2] += w*(si);
+        seq.push(it);
+      });
+    });
+    b.cg = b.lb ? cg.map(v => v / b.lb) : [0,0,0];
+    b.count = b.slots.reduce((a,s) => a + s.items.length, 0);
+    b.used = b.slots.filter(s => s.items.length).length;
+  });
+  if(state.mode === 'T') seq.sort((p,q) => p.x - q.x || p.slot - q.slot);   // load from the cab end toward the door
+  seq.forEach((it, i) => it.step = i+1);
+  PLAN = Object.assign(res, { seq, G: slotGeom() });
+  return PLAN;
+}
+function labelFor(b){
+  const types = b.slots.flatMap(s => s.items.map(i => i.type));
+  if(types.length && types.every(t => t==='E2')) return 'E2 curves';
+  const arches = [...new Set(types.filter(t => !t.startsWith('BB') && t !== 'E2').map(t => t[0]))].sort().join(', ');
+  return (types.includes('E2') ? 'E2 + ' : '') + (arches ? 'arches ' + arches : '') + (types.some(t => t.startsWith('BB')) ? ' + bars' : '');
+}
+
+// ---------------- three.js setup ----------------
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'low-power' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+stage.prepend(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#121518');
+const camera = new THREE.PerspectiveCamera(38, 1, 1, 8000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = false; controls.maxPolarAngle = Math.PI * 0.495;
+scene.add(new THREE.HemisphereLight('#dfe8f5', '#2a2622', 0.9));
+const sun = new THREE.DirectionalLight('#ffffff', 1.4); sun.position.set(-260, 420, 300); scene.add(sun);
+const fill = new THREE.DirectionalLight('#9fb4cc', 0.45); fill.position.set(300, 180, -260); scene.add(fill);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000), new THREE.MeshBasicMaterial({ color:'#171b1f' }));
+ground.rotation.x = -Math.PI/2; scene.add(ground);
+const grid = new THREE.GridHelper(3000, 250, '#2a3037', '#1f2429'); grid.position.y = 0.05; scene.add(grid);
+
+const matCache = {};
+function mat(key, color, opts={}){ if(!matCache[key]) matCache[key] = new THREE.MeshLambertMaterial(Object.assign({ color, side:THREE.DoubleSide }, opts)); return matCache[key]; }
+const WOOD = mat('wood', '#9c7a4f'), PLY = mat('ply', '#c9ab7a');
+const PLY_T = mat('plyT', '#c9ab7a', { transparent:true, opacity:0.55 });
+const RIB = mat('rib', '#d8bf90', { transparent:true, opacity:0.22, depthWrite:false });
+const FOAM = mat('foam', '#7d8892', { transparent:true, opacity:0.55 });
+const COMB = mat('comb', '#e6e6e0');
+const VELC = mat('velc', '#e9f1f7', { transparent:true, opacity:0.16, depthWrite:false });
+const GHOST = mat('ghost', '#8a949c', { transparent:true, opacity:0.08, depthWrite:false });
+const HILITE = mat('hi', '#ffffff', { emissive:'#f2b33d', emissiveIntensity:0.6 });
+const TRUCK_WALL = mat('twall', '#cfd6dd', { transparent:true, opacity:0.08, depthWrite:false });
+const TRUCK_BODY = mat('tbody', '#d9dee3');
+const TRUCK_DARK = mat('tdark', '#3a4047');
+const WELL = mat('well', '#6b737b');
+const ORANGE = mat('orange', '#e5732a');
+function shade(hex, f){ const c = new THREE.Color(hex); c.offsetHSL(0, -0.1, f); return '#'+c.getHexString(); }
+function pieceMat(type, kind){
+  const base = state.color==='arch' ? ARCH_COL[archOf(type)] : SEC_COL[secKind(type)];
+  const flat = (kind==='P' || kind==='PA' || kind==='bar'), rung = (kind==='R' || kind==='R2');
+  return mat(state.color+':'+base+(flat?':f':rung?':r':''), flat ? shade(base,-0.22) : rung ? shade(base,0.08) : base);
+}
+
+// geometry cache, keyed by section + angle (angles come from a 0.5° grid, so this stays small)
+const gCache = new Map();
+function shapeOf(pts){ const s = new THREE.Shape(); s.moveTo(pts[0][0], pts[0][1]); for(let i=1;i<pts.length;i++) s.lineTo(pts[i][0], pts[i][1]); s.closePath(); return s; }
+function sectionGeo(type, o){
+  const key = type + '@' + o.a + '|' + o.ox.toFixed(3); if(gCache.has(key)) return gCache.get(key);
+  const pcs = xform(type, o);
+  const pieces = pcs.map(pc => ({ k:pc.k, geo:new THREE.ExtrudeGeometry(shapeOf(pc.p), { depth:1, bevelEnabled:false, curveSegments:1 }) }));
+  const pts = pcs.flatMap(pc => pc.p);
+  const xs = pts.map(p => p[0]); const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const prof = []; for(let x=minX; x<=maxX+0.01; x+=0.5){ let m = 1e9; for(const p of pts) if(Math.abs(p[0]-x) < 0.5 && p[1] < m) m = p[1]; if(m < 1e9) prof.push([x, m]); }
+  const lowX = pts.filter(p => p[1] <= 6).map(p => p[0]);
+  const plumb = (Math.max(...lowX) - Math.min(...lowX)) <= 9.5 && o.w <= 14;
+  let rib = null;
+  if(!plumb){
+    const lo = 0.75; const rp = [[prof[0][0], lo]].concat(prof.map(([x,y]) => [x, Math.max(y-0.25, lo+0.05)])).concat([[prof[prof.length-1][0], lo]]);
+    rib = new THREE.ExtrudeGeometry(shapeOf(rp), { depth:0.75, bevelEnabled:false, curveSegments:1 });
+  }
+  const hiX = pts.filter(p => p[1] >= o.h - 3).map(p => p[0]);
+  const r = { pieces, rib, pocket:[Math.min(...lowX), Math.max(...lowX)], cap:[Math.min(...hiX), Math.max(...hiX)] };
+  gCache.set(key, r); return r;
+}
+
+// ---------------- scene build ----------------
+const root = new THREE.Group(); scene.add(root);
+let pickables = [], secGroups = [], disposables = [], bayInfo = [];
+function box(w,h,d,material,x,y,z,parent){
+  const g = new THREE.BoxGeometry(Math.max(w,0.01),Math.max(h,0.01),Math.max(d,0.01)); disposables.push(g);
+  const m = new THREE.Mesh(g, material); m.position.set(x+w/2, y+h/2, z+d/2); parent.add(m); return m;
+}
+function textSprite(lines, color='#e8ebee', scale=1){
+  const c = document.createElement('canvas'); const s = 2; c.width = 640*s; c.height = 150*s;
+  const x = c.getContext('2d'); x.scale(s,s);
+  x.fillStyle = 'rgba(26,30,34,0.86)'; x.strokeStyle = '#30363d'; x.lineWidth = 2;
+  x.beginPath(); x.roundRect(4,4,632,142,14); x.fill(); x.stroke();
+  x.fillStyle = color; x.font = '600 46px "IBM Plex Sans Condensed", sans-serif'; x.fillText(lines[0], 24, 62);
+  x.fillStyle = '#98a2ab'; x.font = '400 30px "IBM Plex Mono", monospace'; x.fillText(lines[1] || '', 24, 114);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; disposables.push(tex);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, depthWrite:false })); sp.scale.set(46*scale, 10.8*scale, 1); return sp;
+}
+function lineLoop(pts, color, parent, dashed){
+  const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(...p))); disposables.push(g);
+  const m = dashed ? new THREE.LineDashedMaterial({ color, dashSize:3, gapSize:2 }) : new THREE.LineBasicMaterial({ color });
+  const l = new THREE.Line(g, m); if(dashed) l.computeLineDistances(); parent.add(l); return l;
+}
+// one section standing in its slot, with its velcro layer, rib or pocket, cap and spacer
+function addSection(parent, it, bay, base, zp, capTop, flip){
+  const t = TY[it.type]; const o = it.o;
+  const sec = new THREE.Group(); sec.position.set(it.x, base, zp); sec.userData.it = it; parent.add(sec); secGroups.push(sec);
+  if(t.bar){
+    const rows = Math.ceil(t.bar/3);
+    for(let b=0;b<t.bar;b++){ const m = box(0.95, t.len, 1/rows - 0.02, pieceMat(it.type,'bar'), (b%3), 0, Math.floor(b/3)*(1/rows), sec); m.userData.kind='bar'; m.userData.it = it; pickables.push(m); }
+  } else {
+    const body = new THREE.Group(); sec.add(body);
+    if(flip){ body.scale.x = -1; body.position.x = o.w; }
+    const G = sectionGeo(it.type, o);
+    G.pieces.forEach(({k, geo}) => {
+      const m = new THREE.Mesh(geo, pieceMat(it.type, k)); m.userData.kind = k; m.userData.it = it; body.add(m); pickables.push(m);
+      if(state.velc && bay.geom.c > 0){ const v = new THREE.Mesh(geo, VELC); v.scale.z = 1 + 2*bay.geom.c; v.position.z = -bay.geom.c; v.userData.sup = it; v.renderOrder = 2; body.add(v); }
+    });
+    if(state.sup){
+      const sw = bay.geom.slotw;
+      if(G.rib){ const r = new THREE.Mesh(G.rib, RIB); r.position.z = 0.125; r.userData.sup = it; body.add(r); }
+      else { const f = box(G.pocket[1]-G.pocket[0]+2, 2.5, sw, FOAM, G.pocket[0]-1, 0, -(sw-1)/2, body); f.userData.sup = it; }
+      const ch = capTop - base - (o.h - 1.5);
+      if(ch > 0.2){ const c = box(G.cap[1]-G.cap[0]+2, ch, sw, FOAM, G.cap[0]-1, o.h-1.5, -(sw-1)/2, body); c.userData.sup = it; }
+      if(it.pos > 0){ const s = box(SPACER-0.3, 30, 1, PLY, -bay.geom.gap + bay.geom.c + 0.15, 3.5, 0, sec); s.userData.sup = it; }
+    }
+  }
+  return sec;
+}
+function addCombs(g, bay, base, yTop, zFirst, P, stations, zWallIn, zWallOut){
+  const G = bay.geom, tooth = state.tooth;
+  [base+3, base + (yTop-base)*0.48, yTop-3.5].forEach(y => {
+    stations.forEach(xc => box(1.0, 1.5, zWallOut - zWallIn, COMB, xc-0.5, y, zWallIn, g));
+    const tg = new THREE.BoxGeometry(3, 1.5, tooth); disposables.push(tg);
+    const n = bay.maxslots + 1; const inst = new THREE.InstancedMesh(tg, COMB, n*stations.length); const m4 = new THREE.Matrix4(); let k = 0;
+    for(let i=0;i<n;i++){
+      const zc = i===0 ? zFirst - tooth/2 : zFirst + (i-1)*P + G.slotw + tooth/2;
+      stations.forEach(xc => { m4.makeTranslation(xc + (xc < bay.len/2 ? 2 : -2), y+0.75, zc); inst.setMatrixAt(k++, m4); });
+    }
+    g.add(inst);
+  });
+}
+function buildPallet(b, bi, px){
+  const g = new THREE.Group(); g.position.x = px; root.add(g);
+  const G = b.geom, P = G.pitch * state.spread, tooth = state.tooth, POST = PAL.POST;
+  const base = b.deckH + 0.75, railU = base + b.clearH + 0.25;
+  const z0 = POST + tooth;
+  const span = z0 + (b.maxslots-1)*P + G.slotw + tooth + POST;
+  const span1 = z0 + (b.maxslots-1)*G.pitch + G.slotw + tooth + POST;
+  const D = PAL.D + (span - span1);
+  const zShift = (D - span)/2;
+  if(state.rack){
+    const sH = b.deckH - 0.75;
+    [0, D/2-0.75, D-1.5].forEach(z => box(PAL.W, sH, 1.5, WOOD, 0, 0, z, g));
+    for(let i=0;i<7;i++) box(3.5, 0.75, D, WOOD, i*(PAL.W-3.5)/6, sH, 0, g);
+    [[0,0],[PAL.W-POST,0],[0,D-3.5],[PAL.W-POST,D-3.5]].forEach(([x,z]) => box(POST, b.top-b.deckH, 3.5, WOOD, x, b.deckH, z, g));
+    box(PAL.W-2*POST, 1.5, D-2*POST, PLY, POST, b.deckH, POST, g);
+    [POST, PAL.W/2-1, PAL.W-POST-2].forEach(x => box(2, b.railT, D-2*POST, PLY_T, x, railU, POST, g));
+    addCombs(g, b, base, railU, zShift + z0, P, [POST+0.5, PAL.W-POST-0.5], POST, D-POST);
+  }
+  if(state.limit) lineLoop([[0,90,0],[PAL.W,90,0],[PAL.W,90,D],[0,90,D],[0,90,0]], '#ff6b5e', g, true);
+  const flipCount = {};
+  b.slots.forEach((sl, si) => {
+    const zp = zShift + z0 + si*P + (G.slotw-1)/2;
+    sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1; addSection(g, it, b, base, zp, railU, flipCount[it.type]%2===0); });
+  });
+  const lbl = textSprite([`${b.label}${b.tall?'  ·  tall rack':''}`, `48×40×${frac(b.top)}  ${ftin(b.top)}`], b.tall ? '#f2b33d' : '#e8ebee');
+  lbl.position.set(PAL.W/2, b.top + 12, D/2); g.add(lbl);
+  bayInfo.push({ x:px, len:PAL.W, depth:D, top:b.top, center:new THREE.Vector3(px + PAL.W/2, b.top/2, D/2) });
+}
+function buildTruck(b){
+  const v = state.veh, g = new THREE.Group(); root.add(g);
+  const G = b.geom, P = G.pitch * state.spread, tooth = state.tooth;
+  const floor = v.deckH, base = floor + 0.75, railU = base + b.clearH + 0.25;
+  const z0 = 1.5 + tooth;
+  const span = z0 + (b.maxslots-1)*P + G.slotw + tooth + 1.5;
+  const Wd = Math.max(v.W, span);
+  if(state.rack){
+    // chassis, cab, wheels
+    box(v.L + 20, 8, Wd - 10, TRUCK_DARK, -20, floor - 14, 5, g);
+    box(v.L, 3, Wd, TRUCK_BODY, 0, floor - 3, 0, g);
+    const cabL = 72; box(cabL, floor + 52, Wd - 4, TRUCK_BODY, -cabL - 22, 14, 2, g);
+    box(18, 30, Wd - 10, TRUCK_DARK, -cabL - 4, floor + 4, 5, g);
+    const wg = new THREE.CylinderGeometry(16, 16, 9, 20); disposables.push(wg); wg.rotateX(Math.PI/2);
+    [[-cabL - 2, 0], [v.wellX, 0]].forEach(([wx]) => [-2, Wd + 2].forEach(wz => { const w = new THREE.Mesh(wg, TRUCK_DARK); w.position.set(wx, 16, wz); g.add(w); }));
+    // box walls (see-through), roof edges, door frame
+    box(v.L, v.H, 0.5, TRUCK_WALL, 0, floor, -0.5, g); box(v.L, v.H, 0.5, TRUCK_WALL, 0, floor, Wd, g);
+    box(0.5, v.H, Wd, TRUCK_WALL, -0.5, floor, 0, g); box(v.L, 0.5, Wd, TRUCK_WALL, 0, floor + v.H, 0, g);
+    const H = v.H, e = [[0,floor,0],[v.L,floor,0],[v.L,floor+H,0],[0,floor+H,0],[0,floor,0],[0,floor,Wd],[v.L,floor,Wd],[v.L,floor+H,Wd],[0,floor+H,Wd],[0,floor,Wd]];
+    lineLoop(e, '#6c7681', g); lineLoop([[0,floor+H,0],[0,floor+H,Wd]], '#6c7681', g); lineLoop([[v.L,floor+H,0],[v.L,floor+H,Wd]], '#6c7681', g); lineLoop([[v.L,floor,0],[v.L,floor,Wd]], '#6c7681', g);
+    const dz = (Wd - v.doorW)/2;
+    lineLoop([[v.L,floor,dz],[v.L,floor+v.doorH,dz],[v.L,floor+v.doorH,dz+v.doorW],[v.L,floor,dz+v.doorW]], '#f2b33d', g);
+    box(0.6, v.H - v.doorH, Wd, TRUCK_BODY, v.L, floor + v.doorH, 0, g);
+    if(dz > 0.5){ box(0.6, v.doorH, dz, TRUCK_BODY, v.L, floor, 0, g); box(0.6, v.doorH, dz, TRUCK_BODY, v.L, floor, dz + v.doorW, g); }
+    if(v.atticH > 0){ const aL = Math.max(0, v.insideL - v.L); if(aL > 0) box(aL, v.atticH, Wd, TRUCK_WALL, -aL, floor + v.H - v.atticH, 0, g); }
+    if(v.ramp > 0){ const rl = floor*2.4; const rg = new THREE.BoxGeometry(rl, 1.2, v.ramp); disposables.push(rg);
+      const r = new THREE.Mesh(rg, TRUCK_DARK); const ang = Math.atan2(floor, rl);
+      r.position.set(v.L + Math.cos(ang)*rl/2, floor/2, Wd/2); r.rotation.z = -ang; g.add(r); }
+    if(v.wells){ [0, Wd - v.wellW].forEach(z => box(v.wellL, v.wellH, v.wellW, WELL, v.wellX - v.wellL/2, floor, z, g)); }
+    // in-truck rack: base board, top rails, combs
+    box(v.L - 3, 1.5, Wd - 3, PLY, 1.5, floor, 1.5, g);
+    [1.5, Wd/2 - 1, Wd - 3.5].forEach(z => box(v.L - 3, 1, 2, PLY_T, 1.5, railU, z, g));
+    addCombs(g, b, base, railU, z0, P, [2, v.L*0.5, v.L - 3], 1.5, Wd - 1.5);
+  }
+  const flipCount = {};
+  b.slots.forEach((sl, si) => {
+    const zp = z0 + si*P + (G.slotw-1)/2;
+    sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1; addSection(g, it, b, base, zp, railU, flipCount[it.type]%2===0); });
+  });
+  const lbl = textSprite([v.name.replace(' (enter your own numbers)',''), `floor ${ftin(v.L)} · door ${frac(v.doorW)}×${frac(v.doorH)}`]);
+  lbl.position.set(v.L/2, floor + v.H + 16, Wd/2); g.add(lbl);
+  bayInfo.push({ x:0, len:v.L, depth:Wd, top:floor + v.H, center:new THREE.Vector3(v.L/2, floor + v.H/2, Wd/2) });
+  // pieces that did not fit, stood up beside the truck
+  if(PLAN.left.length){
+    const lg = new THREE.Group(); lg.position.set(0, 0, -60); root.add(lg);
+    let x = 0; const fake = { geom: Object.assign({}, G, { c:0 }), clearH:200 };
+    PLAN.left.forEach(it0 => { const o = orient(it0.type, 200); const it = Object.assign({}, it0, { o, x, h:o.h, pos:0, id:'—', bay:-1, slot:-1, left:true });
+      addSection(lg, it, Object.assign({}, fake, { geom:Object.assign({}, G, { c:0 }) }), 0, 0, 0, false); x += o.w + 4; });
+    const l2 = textSprite([`${PLAN.left.length} pieces don't fit`, 'shown beside the truck'], '#ff8f84'); l2.position.set(Math.min(x,300)/2, 110, -60); root.add(l2);
+  }
+}
+function build(){
+  root.clear(); disposables.forEach(d => d.dispose()); disposables = []; pickables = []; secGroups = []; bayInfo = [];
+  makePlan();
+  if(state.mode === 'P'){ let px = 0; PLAN.bays.forEach((b, bi) => { buildPallet(b, bi, px); px += PAL.W + 40; }); }
+  else buildTruck(PLAN.bays[0]);
+  if(state.step == null || state.step > PLAN.seq.length) state.step = PLAN.seq.length;
+  $('step').max = PLAN.seq.length; $('step').value = state.step;
+  applyVisibility(); renderPanels();
+}
+
+// ---------------- visibility, filter, selection ----------------
+function sameIt(a,b){ return a && b && a.uid === b.uid; }
+function applyVisibility(){
+  const cur = state.step < PLAN.seq.length ? PLAN.seq[state.step-1] : null;
+  secGroups.forEach(g => { const it = g.userData.it; g.visible = it.left || it.step <= state.step; });
+  root.traverse(o => {
+    if(!o.isMesh) return;
+    const it = o.userData.it || o.userData.sup; if(!it) return;
+    if(!o.userData.base) o.userData.base = o.material;
+    const dim = state.arch !== 'all' && archOf(it.type) !== state.arch;
+    const hi = o.userData.it && (sameIt(it, state.sel) || sameIt(it, cur));
+    o.material = dim ? GHOST : (hi ? HILITE : o.userData.base);
+  });
+  stepText(); requestRender();
+}
+function refreshMaterials(){ root.traverse(o => { if(o.isMesh && o.userData.it && o.userData.kind) o.userData.base = pieceMat(o.userData.it.type, o.userData.kind); }); applyVisibility(); renderLegend(); }
+
+function where(it){
+  if(it.left) return "Doesn't fit in this truck";
+  const b = PLAN.bays[it.bay];
+  if(b.kind === 'pallet') return `Pallet ${it.bay+1}, slot ${it.slot+1} of ${b.maxslots}` + (it.n>1 ? `, piece ${it.pos+1} of ${it.n}` : '');
+  return `Truck slot ${it.slot+1} of ${b.maxslots}, ${ftin(it.x)} from the front wall`;
+}
+function describe(it){
+  const t = TY[it.type];
+  return { name: it.type.startsWith('BB') ? `Bottom bars (${archOf(it.type)})` : it.type, desc:t.desc,
+    size: t.bar ? `${frac(t.len)} bars, bundled` : `${frac(it.o.h)} tall × ${frac(it.o.w)} long in slot × 1"`, lb:t.lb };
+}
+function stepText(){
+  const n = PLAN.seq.length, el = $('stepText');
+  if(state.step >= n){ el.innerHTML = `Showing the finished load: <b>${n}</b> pieces. Drag the slider or press Play to watch it load piece by piece.` + (state.mode==='T' ? ' Unload in reverse.' : ''); return; }
+  const it = PLAN.seq[state.step-1];
+  el.innerHTML = state.step === 0 ? 'Empty. Press ▶ to load the first piece.' :
+    `<b>Step ${state.step} of ${n}:</b> load <b class="mono">${it.id}</b> · ${describe(it).name} (${describe(it).desc}) into ${where(it).toLowerCase()}.`;
+}
+
+// ---------------- panels ----------------
+function tiles(){
+  const G = PLAN.G, b0 = PLAN.bays[0];
+  let html = `<div><b>${frac(G.slotw)}</b><span>slot</span></div><div><b>${frac(G.pitch)}</b><span>pitch</span></div><div><b>${b0.maxslots}</b><span>slots per ${state.mode==='P'?'pallet':'truck'}</span></div>`;
+  if(state.mode === 'P'){ const nt = PLAN.bays.filter(b=>b.tall).length; html += `<div><b>${PLAN.bays.length}</b><span>pallets (${nt} tall)</span></div>`; }
+  else html += `<div><b>${b0.used}</b><span>slots used</span></div>`;
+  $('tiles').innerHTML = html; $('clearOut').textContent = frac(state.clear);
+}
+function renderPallets(){
+  const el = $('pals'); el.innerHTML = '';
+  const all = document.createElement('button'); all.className = 'pal'; all.setAttribute('aria-pressed','false');
+  const tot = PLAN.bays.reduce((a,b)=>a+b.lb,0);
+  all.innerHTML = `<span class="n">All ${PLAN.bays.length} pallets</span><span class="h">${lb(tot)} Al</span><span class="d">Frame the whole shipment</span>`;
+  all.onclick = () => frameAll(); el.appendChild(all);
+  PLAN.bays.forEach((b, i) => {
+    const btn = document.createElement('button'); btn.className = 'pal'; btn.setAttribute('aria-pressed','false');
+    btn.innerHTML = `<span class="n">P${i+1} · ${labelFor(b)}</span><span class="h ${b.tall?'tall':''}">${ftin(b.top)}</span>` +
+      `<span class="d">${b.used}/${b.maxslots} slots · ${b.count} pieces · ${lb(b.lb)} aluminum · CG ${frac(b.deckH + 0.75 + b.cg[1])} up</span>`;
+    btn.onclick = () => focusBay(i); el.appendChild(btn);
+  });
+}
+function checkRow(ok, text, warn){ return `<li><span class="pill ${ok ? 'ok' : warn ? 'warnc' : 'no'}">${ok ? 'OK' : warn ? 'CHECK' : 'NO'}</span><span>${text}</span></li>`; }
+function renderTruck(){
+  const v = state.veh, b = PLAN.bays[0];
+  const total = ITEMS.reduce((a,i)=>a+TY[i.type].lb,0), loaded = b.lb;
+  const pct = Math.min(100, loaded / v.maxLoad * 100);
+  const palTall = packPallets(null,null).bays; const tallest = Math.max(...palTall.map(p=>p.top)), shortest = Math.min(...palTall.map(p=>p.top));
+  let h = '';
+  h += checkRow(!PLAN.left.length, PLAN.left.length ? `<b>${PLAN.left.length} pieces don't fit</b> (${[...new Set(PLAN.left.map(i=>i.type))].join(', ')}). They're shown beside the truck. Try a bigger truck or less clearance.` : `All ${ITEMS.length} pieces fit in ${b.used} of ${b.maxslots} slots.`);
+  h += checkRow(loaded <= v.maxLoad, `Payload ${lb(loaded)} of aluminum against a ${lb(v.maxLoad)} max load. Racks and foam are extra.<div class="bar"><i style="width:${pct}%"></i></div>`);
+  h += checkRow(true, `Each section passes through the ${frac(v.doorW)} × ${frac(v.doorH)} door when carried in lengthwise; the in-truck racks are built in place.`);
+  h += checkRow(shortest + 0 <= v.doorH && 40 <= v.doorW, `Pre-built pallet racks: ${frac(shortest)}${tallest>shortest?`–${frac(tallest)}`:''} tall against a ${frac(v.doorH)} door, so they ${shortest <= v.doorH ? 'fit' : "can't go in standing"}.`, false);
+  if(v.ramp > 0) h += checkRow(false, `Loading ramp is ${frac(v.ramp)} wide: fine for carrying sections, too narrow for a pallet jack. No liftgate.`, true);
+  if(v.liftgate) h += checkRow(true, 'Liftgate: confirm its platform depth and rated load with the rental.', false);
+  if(v.wells) h += checkRow(false, `Wheel wells take floor space in the ${b.slots.filter(s=>s.segs.length>1 || s.segs[0].rear - s.segs[0].front < v.L - 10).length} slots along each wall. Well size is an estimate; measure yours.`, true);
+  const cgF = b.cg[0] / v.L * 100;
+  const zc = 1.5 + state.tooth + b.cg[2]*PLAN.G.pitch + PLAN.G.slotw/2, lat = zc - v.W/2;
+  h += checkRow(cgF >= 35 && cgF <= 60 && Math.abs(lat) <= 3, `Load center of gravity ${ftin(b.cg[0])} from the front wall (${Math.round(cgF)}% of the floor) and ${frac(Math.abs(lat))} ${lat<0?'left':'right'} of the centerline. Keep heavy load ahead of the rear axle and centered side to side.`, true);
+  $('truckChecks').innerHTML = h;
+}
+function renderDims(){
+  const v = state.veh, el = $('dims');
+  el.innerHTML = DIM_FIELDS.map(([k, name]) => `<label for="d_${k}">${name}</label><input id="d_${k}" type="number" min="0" step="1" value="${v[k]}">`).join('') +
+    `<label for="d_wells">Wheel wells inside the box</label><input id="d_wells" type="checkbox" ${v.wells?'checked':''}>`;
+  DIM_FIELDS.forEach(([k]) => $('d_'+k).onchange = e => { state.veh[k] = Math.max(0, +e.target.value || 0); state.moves.T = {}; rebuildKeep(); });
+  $('d_wells').onchange = e => { state.veh.wells = e.target.checked; state.moves.T = {}; rebuildKeep(); };
+}
+function renderLegend(){
+  const el = $('legend');
+  const extra = `<span><i class="sw" style="background:#c9ab7a"></i>Rack / ribs</span><span><i class="sw" style="background:#7d8892"></i>Foam</span><span><i class="sw" style="background:#e9f1f7;opacity:.5"></i>Velcro</span>`;
+  el.innerHTML = (state.color==='arch' ? Object.entries(ARCH_COL).map(([a,c]) => `<span><i class="sw" style="background:${c}"></i>Arch ${a}</span>`)
+    : Object.entries(SEC_COL).map(([k,c]) => `<span><i class="sw" style="background:${c}"></i>${SEC_NAME[k]}</span>`)).join('') + extra;
+}
+function renderMoves(){
+  const n = Object.keys(state.moves[state.mode]).length;
+  $('movesCount').textContent = n ? `${n} manual move${n>1?'s':''}` : 'No manual moves';
+  $('movesReset').disabled = !n;
+}
+function renderCost(){
+  const cp = +$('costPallet').value, cr = +$('costRack').value, ct = +$('costTruck').value, ctr = +$('costTruckRack').value;
+  const nP = state.mode === 'P' ? PLAN.bays.length : packPallets(null,null).bays.length;
+  const parts = [];
+  if(cp || cr) parts.push(`<b>Pallets:</b> ${nP} × ($${(cp||0).toLocaleString()} + $${(cr||0).toLocaleString()}) = <b>$${(nP*((cp||0)+(cr||0))).toLocaleString()}</b>`);
+  if(ct || ctr) parts.push(`<b>Truck:</b> $${(ct||0).toLocaleString()} + $${(ctr||0).toLocaleString()} = <b>$${((ct||0)+(ctr||0)).toLocaleString()}</b>`);
+  $('costOut').innerHTML = parts.length ? parts.join('<br>') : 'Enter your quotes to compare. Pallet count comes from the current pallet plan.';
+}
+function renderPanels(){
+  tiles(); renderLegend(); renderMoves(); renderCost();
+  $('palletPanel').hidden = state.mode !== 'P'; $('truckPanel').hidden = state.mode !== 'T';
+  if(state.mode === 'P') renderPallets(); else renderTruck();
+  if(state.sel){ const it = PLAN.seq.find(i => i.uid === state.sel.uid); state.sel = it || null; }
+  showSel(state.sel);
+}
+
+// ---------------- selection + manual moves ----------------
+function showSel(it){
+  const dl = $('selDl'), mb = $('moveBox');
+  if(!it){ $('selTitle').textContent = 'Click any piece'; $('selHint').hidden = false; dl.hidden = true; mb.hidden = true; return; }
+  const d = describe(it);
+  $('selTitle').textContent = `${it.id} · ${d.name} · ${d.desc}`; $('selHint').hidden = true; dl.hidden = false; mb.hidden = false;
+  dl.innerHTML = `<dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb} lb aluminum</dd><dt>Clearance</dt><dd>${frac(PLAN.G.c)} each face, ${frac(PLAN.G.slotw)} slot</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
+  $('moveBay').innerHTML = PLAN.bays.map((b,i) => `<option value="${i}">${b.label}</option>`).join('');
+  $('moveBay').value = Math.max(0, it.bay); $('moveSlot').max = PLAN.bays[Math.max(0,it.bay)].maxslots; $('moveSlot').value = it.slot + 1;
+  $('moveMsg').textContent = '';
+}
+$('moveGo').onclick = () => {
+  const it = state.sel; if(!it) return;
+  const bay = +$('moveBay').value, slot = (+$('moveSlot').value) - 1, b = PLAN.bays[bay];
+  if(!(slot >= 0 && slot < b.maxslots)){ $('moveMsg').innerHTML = `<span style="color:var(--bad)">Pick a slot from 1 to ${b.maxslots}.</span>`; return; }
+  const prev = state.moves[state.mode][it.uid];
+  state.moves[state.mode][it.uid] = { bay, slot };
+  const uid = it.uid; build();
+  const now = PLAN.seq.find(i => i.uid === uid);
+  if(!state.moves[state.mode][uid] || !now || now.bay !== bay || now.slot !== slot){
+    if(prev) state.moves[state.mode][uid] = prev; else delete state.moves[state.mode][uid];
+    build(); state.sel = PLAN.seq.find(i => i.uid === uid) || null; showSel(state.sel); applyVisibility();
+    $('moveMsg').innerHTML = `<span style="color:var(--bad)">It doesn't fit in ${b.label} slot ${slot+1}: there isn't ${frac(itemW(it.type, b) + PLAN.G.gap)} of free length there.</span>`;
+    return;
+  }
+  state.sel = now; showSel(now); applyVisibility();
+  $('moveMsg').innerHTML = `<span style="color:var(--good)">Moved to ${b.label} slot ${slot+1}. Other pieces re-packed around it.</span>`;
+};
+$('movesReset').onclick = () => { state.moves[state.mode] = {}; rebuildKeep(); };
+
+// ---------------- modals: packing list, weight & balance ----------------
+let modalTSV = '';
+function openModal(title, sub, head, rows){
+  $('modalTitle').textContent = title; $('modalSub').textContent = sub;
+  $('modalBody').innerHTML = `<table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  modalTSV = [head].concat(rows).map(r => r.map(c => String(c).replace(/<[^>]+>/g,'')).join('\t')).join('\n');
+  $('modal').style.display = 'flex'; $('modalClose').focus();
+}
+$('openList').onclick = () => {
+  const rows = PLAN.seq.map(it => { const d = describe(it); return [it.step, `<span class="mono">${it.id}</span>`, where(it), d.name, archOf(it.type), d.desc, d.size, d.lb.toFixed(1)]; })
+    .concat(PLAN.left.map(it => ['—','—',"Doesn't fit", it.type, archOf(it.type), TY[it.type].desc, '', TY[it.type].lb.toFixed(1)]));
+  openModal('Packing list', `${PLAN.seq.length} pieces in loading order${state.mode==='T'?' (unload in reverse)':''}. IDs read container, slot, position: P2-07b is pallet 2, slot 7, second piece.`,
+    ['Step','ID','Location','Section','Arch','Piece','Size','lb'], rows);
+};
+$('openWeights').onclick = () => {
+  const rows = PLAN.bays.map(b => {
+    if(b.kind === 'pallet') return [b.label, labelFor(b), b.count, lb(b.lb), b.tall ? '~120 lb' : '~110 lb', lb(b.lb + (b.tall?120:110)),
+      frac(b.deckH + 0.75 + b.cg[1]), `${frac(Math.abs(b.cg[0] - PAL.W/2))} ${b.cg[0] < PAL.W/2 ? 'left' : 'right'} of center`];
+    const v = state.veh; return ['Truck', v.name, b.count, lb(b.lb), 'not counted', lb(b.lb), frac(v.deckH + 0.75 + b.cg[1]) + ' above ground', `${ftin(b.cg[0])} from front wall, ${frac(Math.abs(1.5 + state.tooth + b.cg[2]*PLAN.G.pitch + PLAN.G.slotw/2 - v.W/2))} off centerline`];
+  });
+  openModal('Weight & balance', 'Aluminum weights are from the Rhino geometry (0.125" wall tube, ¼" flat). Rack and pallet weights are estimates. CG = center of gravity of the aluminum.',
+    ['Unit','Contents','Pieces','Aluminum','Rack + pallet','Total','CG height','CG offset'], rows);
+};
+$('modalClose').onclick = () => $('modal').style.display = 'none';
+$('modal').onclick = e => { if(e.target.id === 'modal') $('modal').style.display = 'none'; };
+document.addEventListener('keydown', e => { if(e.key === 'Escape') $('modal').style.display = 'none'; });
+$('modalCopy').onclick = async () => { try { await navigator.clipboard.writeText(modalTSV); $('modalCopy').textContent = 'Copied'; } catch { $('modalCopy').textContent = 'Copy blocked'; } setTimeout(()=>$('modalCopy').textContent='Copy for spreadsheet', 1600); };
+
+// ---------------- controls ----------------
+function rebuildKeep(){ const n = bayInfo.length; state.step = null; build(); if(bayInfo.length !== n) frameAll(); }
+function setMode(m){ state.mode = m; state.sel = null; state.step = null; $('modeP').setAttribute('aria-pressed', m==='P'); $('modeT').setAttribute('aria-pressed', m==='T'); build(); frameAll(true); }
+$('modeP').onclick = () => setMode('P'); $('modeT').onclick = () => setMode('T');
+function setTooth(v){ state.tooth = v; $('toothT').setAttribute('aria-pressed', v===0.375); $('toothS').setAttribute('aria-pressed', v===0.5); state.moves = { P:{}, T:{} }; rebuildKeep(); }
+$('toothT').onclick = () => setTooth(0.375); $('toothS').onclick = () => setTooth(0.5);
+$('clear').oninput = e => { state.clear = +e.target.value; state.moves = { P:{}, T:{} }; rebuildKeep(); };
+$('vehicle').innerHTML = Object.entries(VEHICLES).map(([k,v]) => `<option value="${k}">${v.name}</option>`).join('');
+$('vehicle').value = state.vehicle;
+$('vehicle').onchange = e => { state.vehicle = e.target.value; state.veh = vehDefaults(state.vehicle); state.moves.T = {}; renderDims(); state.step = null; build(); frameAll(); };
+$('prio').onchange = e => { state.prio = e.target.value; rebuildKeep(); };
+$('spread').oninput = e => { state.spread = +e.target.value; build(); };
+$('rack').onchange = e => { state.rack = e.target.checked; build(); };
+$('sup').onchange = e => { state.sup = e.target.checked; build(); };
+$('velc').onchange = e => { state.velc = e.target.checked; build(); };
+$('limit').onchange = e => { state.limit = e.target.checked; build(); };
+$('colorby').onchange = e => { state.color = e.target.value; refreshMaterials(); };
+['costPallet','costRack','costTruck','costTruckRack'].forEach(id => $(id).oninput = renderCost);
+const archEl = $('arches');
+['all','A','B','C','D','E'].forEach(a => {
+  const b = document.createElement('button'); b.dataset.a = a; b.setAttribute('aria-pressed', a==='all');
+  b.innerHTML = a==='all' ? 'All' : `<span class="sw" style="background:${ARCH_COL[a]}"></span>${a} <span style="color:var(--muted)">×${QTY[a]}</span>`;
+  b.onclick = () => { state.arch = a; archEl.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x.dataset.a===a)); applyVisibility(); };
+  archEl.appendChild(b);
+});
+// load sequence
+let playTimer = null;
+function setStep(s){ state.step = Math.max(0, Math.min(PLAN.seq.length, s)); $('step').value = state.step; applyVisibility(); }
+$('step').oninput = e => setStep(+e.target.value);
+$('stepPrev').onclick = () => setStep(state.step - 1);
+$('stepNext').onclick = () => setStep(state.step + 1);
+$('stepPlay').onclick = () => {
+  if(playTimer){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; }
+  if(state.step >= PLAN.seq.length) setStep(0);
+  $('stepPlay').textContent = 'Pause';
+  playTimer = setInterval(() => { if(state.step >= PLAN.seq.length){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; } setStep(state.step + 1); }, reduce ? 600 : 260);
+};
+
+// ---------------- picking ----------------
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let downAt = null;
+function visibleUp(o){ while(o){ if(!o.visible) return false; o = o.parent; } return true; }
+function pick(ev){
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((ev.clientX - r.left)/r.width)*2 - 1, -((ev.clientY - r.top)/r.height)*2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const h = ray.intersectObjects(pickables, false).find(h => h.object.material !== GHOST && visibleUp(h.object));
+  return h ? h.object.userData.it : null;
+}
+renderer.domElement.addEventListener('pointermove', ev => {
+  const it = pick(ev), r = stage.getBoundingClientRect();
+  if(it){ const d = describe(it);
+    tip.innerHTML = `<b>${it.id} · ${d.name}</b> ${d.desc}<br>${d.size}<br><span style="color:var(--muted)">${where(it)}</span>`;
+    tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 270) + 'px'; tip.style.top = (ev.clientY - r.top + 14) + 'px';
+    renderer.domElement.style.cursor = 'pointer';
+  } else { tip.style.display = 'none'; renderer.domElement.style.cursor = ''; }
+});
+renderer.domElement.addEventListener('pointerleave', () => tip.style.display = 'none');
+renderer.domElement.addEventListener('pointerdown', ev => downAt = [ev.clientX, ev.clientY]);
+renderer.domElement.addEventListener('pointerup', ev => {
+  if(!downAt || Math.hypot(ev.clientX-downAt[0], ev.clientY-downAt[1]) > 5) return;
+  const it = pick(ev); state.sel = it && !it.left ? it : null; showSel(state.sel); applyVisibility();
+});
+
+// ---------------- camera + render on demand ----------------
+let anim = null, queued = false;
+function requestRender(){ if(!queued){ queued = true; requestAnimationFrame(frame); } }
+function frame(now){
+  queued = false;
+  if(anim){
+    const k = Math.min(1, (now - anim.t0)/anim.dur), e = k<0.5 ? 2*k*k : 1 - Math.pow(-2*k+2, 2)/2;
+    controls.target.lerpVectors(anim.ft, anim.tt, e); camera.position.lerpVectors(anim.fp, anim.tp, e);
+    if(k >= 1) anim = null; else requestRender();
+    controls.update();
+  }
+  renderer.render(scene, camera);
+}
+controls.addEventListener('change', requestRender);
+function flyTo(target, pos, instant){
+  if(instant || reduce){ controls.target.copy(target); camera.position.copy(pos); controls.update(); requestRender(); return; }
+  anim = { t0: performance.now(), dur: 700, ft: controls.target.clone(), fp: camera.position.clone(), tt: target, tp: pos }; requestRender();
+}
+function frameAll(instant){
+  if(!bayInfo.length) return;
+  const x0 = Math.min(...bayInfo.map(b=>b.x)) - (state.mode==='T' ? 100 : 0), x1 = Math.max(...bayInfo.map(b=>b.x + b.len));
+  const width = x1 - x0, c = new THREE.Vector3((x0+x1)/2, 45, bayInfo[0].depth/2);
+  if(state.mode === 'T'){ const d = Math.max(width*1.25, 340); flyTo(c, new THREE.Vector3(c.x + d*0.55, 60 + d*0.42, c.z + d*0.95), instant); }
+  else { const dist = Math.max(width*1.15, 300); flyTo(c, new THREE.Vector3(c.x - dist*0.05, 50 + dist*0.5, c.z + dist*1.0), instant); }
+  $('pals').querySelectorAll('.pal').forEach((b,i) => b.setAttribute('aria-pressed', i===0));
+}
+function focusBay(i){
+  const b = bayInfo[i]; const c = b.center.clone();
+  flyTo(c, new THREE.Vector3(c.x - 95, c.y + 70, c.z + 150));
+  $('pals').querySelectorAll('.pal').forEach((el,k) => el.setAttribute('aria-pressed', k===i+1));
+}
+function resize(){ const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w/Math.max(h,1); camera.updateProjectionMatrix(); requestRender(); }
+new ResizeObserver(resize).observe(stage);
+
+renderDims(); resize(); build(); frameAll(true);
+document.fonts && document.fonts.ready.then(() => { build(); });
+</script>
+</body>
+</html>
