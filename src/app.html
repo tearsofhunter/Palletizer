@@ -12,7 +12,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 // per project plus its geometry); elsewhere (a GitHub copy, signed out) it falls back to
 // project files in ./projects/ plus this browser's local storage.
 // =====================================================================================
-const DEFAULT_SETTINGS = { tol:0.125, tooth:0.375, pallet:{ L:48, W:40, deckStd:5.5, deckLow:4, maxH:90, tallMaxH:96 } };
+const DEFAULT_SETTINGS = { tol:0.125, tooth:0.375, pallet:{ L:48, W:40, deckStd:5.5, deckLow:4, maxH:90, tallMaxH:96, maxLb:1500, tipG:0.5, tareStd:110, tareTall:120 } };
 const DEFAULT_SHIPPING = { mode:'P', vehicle:'uh26', veh:null, prio:'', moves:{ P:{}, T:{} }, costs:{} };
 function normalize(p){
   p.settings = Object.assign(clone(DEFAULT_SETTINGS), p.settings || {});
@@ -150,7 +150,7 @@ const DIM_FIELDS = [
 function vehDefaults(key){ const v = Object.assign({}, VEHICLES[key]); Object.assign(v, { wellL:36, wellW:9, wellH:10, wellX:Math.round(v.L*0.62) }); return v; }
 
 // UI state that is not saved with the project
-const view = { spread:1, rack:true, sup:true, velc:true, limit:true, dims:true, color:'group', group:'all', sel:null, step:null, tab:'pack' };
+const view = { cg:true, spread:1, rack:true, sup:true, velc:true, limit:true, dims:true, color:'group', group:'all', sel:null, step:null, tab:'pack' };
 // shorthand accessors for the saved settings
 const S = () => PROJ.settings, SH = () => PROJ.shipping, PS = () => PROJ.settings.pallet;
 const veh = () => { if(!SH().veh) SH().veh = vehDefaults(SH().vehicle); return SH().veh; };
@@ -343,6 +343,40 @@ function makePlan(){
   PLAN = Object.assign(res, { seq });
   return PLAN;
 }
+// Weight & balance. Pallet: items plus an estimated rack/pallet tare (treated as sitting at the
+// footprint center, low down). Tip-over: a pallet tips when sideways acceleration × CG height
+// exceeds the distance from the CG to the nearest edge, so it holds up to (edge distance ÷ CG height) g.
+function balance(b){
+  if(b.kind === 'truck'){
+    const v = veh(), x = b.cg[0], y = v.deckH + 0.75 + b.cg[1], z = 1.5 + (b.zShift||0) + b.cg[2];
+    const fr = x / v.L, lat = z - v.W/2;
+    const offOK = !b.count || (fr >= 0.35 && fr <= 0.6 && Math.abs(lat) <= 3);
+    const wOK = b.lb <= v.maxLoad;
+    return { total:b.lb, tare:0, x, y, z, fr, lat, wOK, offOK, tipOK:true, status: !wOK ? 'no' : offOK ? 'ok' : 'warn' };
+  }
+  const ps = PS(), tare = b.tall ? ps.tareTall : ps.tareStd;
+  const ix = b.cg[0], iy = b.deckH + 0.75 + b.cg[1], iz = POST + (b.depthBudget - b.depthUsed)/2 + b.cg[2];
+  const tx = b.len/2, ty = Math.max(b.deckH, b.top*0.3), tz = b.dep/2;
+  const total = b.lb + tare, k = total || 1;
+  const x = (b.lb*ix + tare*tx)/k, y = (b.lb*iy + tare*ty)/k, z = (b.lb*iz + tare*tz)/k;
+  const dx = x - b.len/2, dz = z - b.dep/2;
+  const tipLong = Math.min(x, b.len - x) / y, tipSide = Math.min(z, b.dep - z) / y, tip = Math.min(tipLong, tipSide);
+  const wOK = total <= ps.maxLb, tipOK = tip >= ps.tipG, offOK = Math.abs(dx) <= b.len/6 && Math.abs(dz) <= b.dep/6;
+  return { total, tare, x, y, z, dx, dz, tipLong, tipSide, tip, wOK, tipOK, offOK, status: !wOK || !tipOK ? 'no' : offOK ? 'ok' : 'warn' };
+}
+const BAL_COL = { ok:'#3fcf9e', warn:'#f2b33d', no:'#ff6b5e' };
+function cgMarker(g, bl, D){
+  if(!view.cg) return;
+  const col = BAL_COL[bl.status];
+  const sg = new THREE.SphereGeometry(2.2, 16, 12); disposables.push(sg);
+  const sm = new THREE.MeshBasicMaterial({ color:col, depthTest:false, transparent:true, opacity:0.95 }); disposables.push(sm);
+  const s = new THREE.Mesh(sg, sm); s.position.set(bl.x, bl.y, bl.z); s.renderOrder = 10; g.add(s);
+  const rg = new THREE.RingGeometry(3, 4, 24); disposables.push(rg); rg.rotateX(-Math.PI/2);
+  const rm = new THREE.MeshBasicMaterial({ color:col, depthTest:false, transparent:true, opacity:0.55 }); disposables.push(rm);
+  const r = new THREE.Mesh(rg, rm); r.position.set(bl.x, 0.2, bl.z); r.renderOrder = 9; g.add(r);
+  const ln = lineLoop([[bl.x, 0.2, bl.z],[bl.x, bl.y, bl.z]], col, g, true); ln.material.depthTest = false; ln.material.transparent = true; ln.material.opacity = 0.6; ln.renderOrder = 9;
+}
+function tipTxt(v){ return `${v.toFixed(2)} g`; }
 function labelFor(b){
   const types = b.slots.flatMap(s => s.items.map(i => i.type));
   const gs = [...new Set(types.map(t => DEFS[t].group).filter(Boolean))];
@@ -528,6 +562,7 @@ function buildPallet(b, bi, px){
   }
   if(view.limit) lineLoop([[0,PS().maxH,0],[W,PS().maxH,0],[W,PS().maxH,D],[0,PS().maxH,D],[0,PS().maxH,0]], '#ff6b5e', g, true);
   if(view.dims) palletDimLines(g, b, D);
+  cgMarker(g, balance(b), D);
   const flipCount = {};
   b.slots.forEach((sl, si) => sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1;
     addItem(g, it, b, base, zs[si] + PROJ.settings.tol + (sl.t - DEFS[it.type].t)/2, sl.sw, railU, flipCount[it.type]%2===0); }));
@@ -568,6 +603,7 @@ function buildTruck(b){
   const flipCount = {};
   b.slots.forEach((sl, si) => sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1;
     addItem(g, it, b, base, zs[si] + PROJ.settings.tol + (sl.t - DEFS[it.type].t)/2, sl.sw, railU, flipCount[it.type]%2===0); }));
+  if(b.count) cgMarker(g, balance(b));
   const lbl = textSprite([v.name.replace(' (enter your own numbers)',''), `floor ${ftin(v.L)} · door ${frac(v.doorW)}×${frac(v.doorH)}`]);
   lbl.position.set(v.L/2, floor + v.H + 16, Wd/2); g.add(lbl);
   bayInfo.push({ x:0, len:v.L, depth:Wd, top:floor + v.H, center:new THREE.Vector3(v.L/2, floor + v.H/2, Wd/2) });
@@ -661,9 +697,22 @@ function renderPallets(){
   PLAN.bays.forEach((b, i) => {
     const btn = document.createElement('button'); btn.className = 'pal'; btn.setAttribute('aria-pressed','false');
     btn.innerHTML = `<span class="n">P${i+1} · ${esc(labelFor(b))}</span><span class="h ${b.tall?'tall':''}" title="Overall height including the pallet">${ftin(b.top)} o/a</span>` +
-      `<span class="d">${frac(b.len)} × ${frac(b.dep)} × ${frac(b.top)} overall incl. ${frac(b.deckH)} pallet · ${b.used} slots · ${b.count} pieces · ${lb(b.lb)} · CG ${frac(b.deckH + 0.75 + b.cg[1])} up</span>`;
+      `<span class="d">${frac(b.len)} × ${frac(b.dep)} × ${frac(b.top)} overall incl. ${frac(b.deckH)} pallet · ${b.used} slots · ${b.count} pieces · ${lb(balance(b).total)} with rack · CG ${frac(balance(b).y)} up · tips at ${tipTxt(balance(b).tip)}</span>`;
     btn.onclick = () => focusBay(i); el.appendChild(btn);
   });
+  const ps = PS(), bals = PLAN.bays.map(balance); let h = '';
+  if(bals.length){
+    const heavy = PLAN.bays.filter((b,i) => !bals[i].wOK).map(b => b.label);
+    const maxW = Math.max(...bals.map(x => x.total));
+    h += checkRow(!heavy.length, heavy.length ? `<b>${heavy.join(', ')}</b> over the ${lb(ps.maxLb)} per-pallet limit (heaviest ${lb(maxW)} incl. rack).` : `Every pallet is under ${lb(ps.maxLb)} (heaviest ${lb(maxW)}, rack and pallet included).`);
+    const tippy = PLAN.bays.map((b,i) => [b.label, bals[i]]).filter(([,x]) => !x.tipOK);
+    const worst = PLAN.bays.map((b,i) => [b.label, bals[i]]).sort((p,q) => p[1].tip - q[1].tip)[0];
+    h += checkRow(!tippy.length, tippy.length ? `<b>${tippy.map(t => `${t[0]} tips at ${tipTxt(t[1].tip)}`).join(', ')}</b>. Needs ${tipTxt(ps.tipG)}: strap to the truck wall or widen the base.`
+      : `Tip-over: the least stable is ${worst[0]}, which holds to ${tipTxt(worst[1].tip)} ${worst[1].tipSide <= worst[1].tipLong ? 'sideways' : 'end-to-end'} (needs ${tipTxt(ps.tipG)}).`);
+    const off = PLAN.bays.map((b,i) => [b.label, bals[i]]).filter(([,x]) => !x.offOK);
+    h += checkRow(!off.length, off.length ? `${off.map(t => t[0]).join(', ')}: center of gravity sits outside the middle third of the pallet. Move heavy pieces toward the center.` : 'Every center of gravity is in the middle third of its pallet.', true);
+  }
+  $('palChecks').innerHTML = h;
   if(PLAN.left.length){ const w = document.createElement('div'); w.className = 'hint'; w.style.color = 'var(--bad)';
     w.textContent = `${PLAN.left.length} item${PLAN.left.length>1?'s':''} won't fit a pallet under ${ftin(PS().tallMaxH)} (raise "Tallest pallet allowed" in Items › Pallet settings, or ship by truck).`; el.appendChild(w); }
 }
@@ -680,8 +729,8 @@ function renderTruck(){
   if(v.ramp > 0) h += checkRow(false, `Loading ramp is ${frac(v.ramp)} wide: fine for carrying items, too narrow for a pallet jack. No liftgate.`, true);
   if(v.liftgate) h += checkRow(true, 'Liftgate: confirm its platform depth and rated load with the rental.');
   if(v.wells) h += checkRow(false, `Wheel wells take floor space in the slots along each wall. Well size is an estimate; measure yours.`, true);
-  const cgF = b.cg[0] / v.L * 100, lat = 1.5 + (b.zShift||0) + b.cg[2] - v.W/2;
-  if(b.count) h += checkRow(cgF >= 35 && cgF <= 60 && Math.abs(lat) <= 3, `Load center of gravity ${ftin(b.cg[0])} from the front wall (${Math.round(cgF)}% of the floor) and ${frac(Math.abs(lat))} ${lat<0?'left':'right'} of the centerline.`, true);
+  const bl = balance(b), cgF = bl.fr * 100, lat = bl.lat;
+  if(b.count) h += checkRow(bl.offOK, `Load center of gravity ${ftin(b.cg[0])} from the front wall (${Math.round(cgF)}% of the floor) and ${frac(Math.abs(lat))} ${lat<0?'left':'right'} of the centerline, ${frac(bl.y)} above the ground. Aim for 35–60% so the rear axle isn't overloaded and the front stays planted.`, true);
   $('truckChecks').innerHTML = h;
 }
 function renderDims(){
@@ -740,7 +789,7 @@ function renderPanels(){
   tiles(); renderLegend(); renderMoves(); renderCost(); renderGroupChips();
   $('modeP').setAttribute('aria-pressed', SH().mode==='P'); $('modeT').setAttribute('aria-pressed', SH().mode==='T');
   $('palletPanel').hidden = SH().mode !== 'P'; $('truckPanel').hidden = SH().mode !== 'T';
-  if(PLAN && PLAN.bays.length){ if(SH().mode === 'P') renderPallets(); else renderTruck(); } else $('pals').innerHTML = '';
+  if(PLAN && PLAN.bays.length){ if(SH().mode === 'P') renderPallets(); else renderTruck(); } else { $('pals').innerHTML = ''; $('palChecks').innerHTML = ''; }
   if(view.sel && PLAN){ const it = PLAN.seq.find(i => i.uid === view.sel.uid); view.sel = it || null; }
   showSel(view.sel);
   if(view.tab === 'items') renderItems();
@@ -785,8 +834,8 @@ function renderItems(){
     const k = inp.dataset.k; let v = e.target.value; if(k !== 'name') v = Math.max(0, +v || 0); if(k === 'qty' || k === 'perGroup') v = Math.round(v);
     setEdit(inp.dataset.i, k, v); });
   const ps = PS();
-  const fields = [['L','Pallet length (in)'],['W','Pallet width (in)'],['deckStd','Standard pallet height'],['deckLow','Low-profile skid height (tall racks)'],['maxH','Target overall height'],['tallMaxH','Tallest pallet allowed']];
-  $('palletSettings').innerHTML = fields.map(([k,n]) => `<label for="ps_${k}">${n}</label><input id="ps_${k}" type="number" min="0" step="0.25" value="${ps[k]}">`).join('');
+  const fields = [['L','Pallet length (in)'],['W','Pallet width (in)'],['deckStd','Standard pallet height'],['deckLow','Low-profile skid height (tall racks)'],['maxH','Target overall height'],['tallMaxH','Tallest pallet allowed'],['maxLb','Max weight per pallet (lb)'],['tipG','Tip-over check (g sideways)'],['tareStd','Rack + pallet weight (lb)'],['tareTall','Tall rack + skid weight (lb)']];
+  $('palletSettings').innerHTML = fields.map(([k,n]) => `<label for="ps_${k}">${n}</label><input id="ps_${k}" type="number" min="0" step="${k === 'tipG' ? 0.05 : 0.25}" value="${ps[k]}">`).join('');
   fields.forEach(([k]) => $('ps_'+k).onchange = e => { PS()[k] = Math.max(0, +e.target.value || 0); SH().moves.P = {}; scheduleSave(); rebuildKeep(); });
 }
 $('bxAdd').onclick = () => {
@@ -846,12 +895,13 @@ $('openList').onclick = () => {
 $('openWeights').onclick = () => {
   if(!PLAN) return;
   const rows = PLAN.bays.map(b => {
-    if(b.kind === 'pallet') return [b.label, esc(labelFor(b)), b.count, lb(b.lb), b.tall ? '~120 lb' : '~110 lb', lb(b.lb + (b.tall?120:110)),
-      frac(b.deckH + 0.75 + b.cg[1]), `${frac(Math.abs(b.cg[0] - b.len/2))} ${b.cg[0] < b.len/2 ? 'left' : 'right'} of center`];
-    const v = veh(); return ['Truck', esc(v.name), b.count, lb(b.lb), 'not counted', lb(b.lb), frac(v.deckH + 0.75 + b.cg[1]) + ' above ground', `${ftin(b.cg[0])} from front wall`];
+    const bl = balance(b), st = { ok:'OK', warn:'CHECK', no:'NO' }[bl.status];
+    if(b.kind === 'pallet') return [b.label, esc(labelFor(b)), b.count, lb(b.lb), '~' + lb(bl.tare), lb(bl.total),
+      frac(bl.y), `${frac(Math.abs(bl.dx))} ${bl.dx < 0 ? 'left' : 'right'}, ${frac(Math.abs(bl.dz))} ${bl.dz < 0 ? 'front' : 'back'}`, `${tipTxt(bl.tipSide)} / ${tipTxt(bl.tipLong)}`, st];
+    const v = veh(); return ['Truck', esc(v.name), b.count, lb(b.lb), 'not counted', lb(b.lb), frac(bl.y) + ' above ground', `${ftin(bl.x)} from front wall (${Math.round(bl.fr*100)}%)`, 'strapped', st];
   });
-  openModal('Weight & balance', 'Item weights come from the project. Rack and pallet weights are estimates. CG = center of gravity of the items.',
-    ['Unit','Contents','Pieces','Items','Rack + pallet','Total','CG height','CG offset'], rows);
+  openModal('Weight & balance', `Item weights come from the project; rack and pallet weights are estimates (Items › Pallet settings). CG = combined center of gravity, height measured from the ground. "Tips at" is the sideways / end-to-end acceleration a free-standing pallet can take before it tips; the check needs ${tipTxt(PS().tipG)}.`,
+    ['Unit','Contents','Pieces','Items','Rack + pallet','Total','CG height','CG offset','Tips at (side / end)','Check'], rows);
 };
 $('modalClose').onclick = () => $('modal').style.display = 'none';
 $('modal').onclick = e => { if(e.target.id === 'modal') $('modal').style.display = 'none'; };
@@ -937,6 +987,7 @@ $('rack').onchange = e => { view.rack = e.target.checked; build(); };
 $('sup').onchange = e => { view.sup = e.target.checked; build(); };
 $('velc').onchange = e => { view.velc = e.target.checked; build(); };
 $('limit').onchange = e => { view.limit = e.target.checked; build(); };
+$('cgShow').onchange = e => { view.cg = e.target.checked; build(); };
 function setDims(v){ view.dims = v; $('dims').checked = v; $('dimsToggle').setAttribute('aria-pressed', v); build(); }
 $('dims').onchange = e => setDims(e.target.checked);
 $('dimsToggle').onclick = () => setDims(!view.dims);
