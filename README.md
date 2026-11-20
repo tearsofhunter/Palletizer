@@ -1,42 +1,53 @@
 # Palletizer
 
-A 3D pack planner for shipping 30 aluminum arches (1" × 1" × 0.125" wall tube and 1" × ¼" flat) as 116 bolt-together sections plus 24 bottom bars. Open `index.html` in a browser; it runs standalone and loads three.js from jsDelivr.
+A 3D pack planner for shipping fabricated pieces on racked LTL pallets or in a rental or box truck. Each job is a **project** in a small project library; the 30 aluminum arches are the first one.
 
-## What it does
+Open `index.html` in a browser. It loads three.js from jsDelivr and needs to be served over HTTP (not opened as a file) to read `projects/`.
 
-- **Two shipping modes.** LTL pallets (40" × 48", racked) or a rental or box truck (U-Haul 10', 15', 20', 26', or your own dimensions).
-- **Velcro clearance slider.** Sets the space on each face of a piece; slot width, pitch and pallet count re-pack live. The tall E2 racks grow as needed so E2 still fits the 45" rack width.
-- **Comb teeth.** ⅜" UHMW (tight) or ½" plywood (standard).
-- **Truck checks.** Fit, payload against max load, whether pre-built pallet racks pass the door, ramp width, wheel wells, and center of gravity front-to-back and side-to-side.
-- **Load sequence.** Step through or play the load piece by piece. "Unload first" loads a chosen arch last, at the door end.
-- **Weight & balance.** Aluminum weight, estimated rack weight and CG for each pallet or the truck.
-- **Packing list.** Every piece with an ID (`P2-07b` = pallet 2, slot 7, second piece), location and load step. Copies to a spreadsheet.
-- **Cost comparison** from your own quotes.
-- **Manual moves.** Move a selected piece to another pallet/slot; the rest re-packs around it.
+## How projects get in
 
-Section shapes, sizes and weights come from the Rhino model. Racks, ribs, foam and pallets are schematic. The 26' U-Haul deck height and all wheel-well sizes are estimates; edit them in the app.
+Source models (usually a Rhino file with every asset and its quantity) go through Claude: Claude interprets the model, works out the shippable pieces, their quantities and weights, and writes a project file to `projects/` (listed in `projects/index.json`). In the app, a project file that isn't in your library yet shows up as "· new"; opening it adds it.
+
+You can also import or export project files from the ⋯ menu, duplicate a project to try another pack, and add simple box items (crates, bundles) yourself.
+
+## Storage
+
+- Hosted on claude.ai, projects live in the page's database (one record per project, geometry in separate records), private to the owner and editors.
+- Anywhere else (e.g. GitHub Pages), projects come from `projects/` and your edits are saved in the browser's local storage.
+
+## Project file format (`palletizer-project`, version 1)
+
+```
+id, name, notes, source, created, updated
+settings: { tol, tooth, pallet: { L, W, deckStd, deckLow, maxH, tallMaxH } }   // inches
+groups:   [{ id, name, qty, color }]                                            // assemblies, e.g. "Arch A" ×2
+items:    [{ id, name, desc, group, perGroup | qty, kind: "profile" | "box",
+             t (thickness), lb (each),
+             pieces: [{ k: "main" | "rung" | "plate", p: [[x, y], ...] }],     // profile outline, inches
+             hull: [[x, y], ...],                                               // convex hull of the outline
+             box: { l, h } }]                                                   // for kind "box"
+shipping: { mode, vehicle, veh, prio, moves, costs }
+edits:    { itemId: { name, qty, perGroup, t, lb } }                            // user overrides
+extraItems: [ ...box items added in the app ]
+```
+
+An item's total quantity is `qty`, or `perGroup × group.qty`.
+
+## Features
+
+- Pallet mode with racked slots, packing tolerance per face, comb teeth (⅜" UHMW or ½" plywood), tall racks for pieces that need them, and pallet size and height limits per project.
+- Truck mode: U-Haul 10', 15', 20', 26' or a custom box truck; fit, payload, door, ramp, wheel-well and center-of-gravity checks.
+- Load sequence with "unload first" by group, weight and balance, packing list (copies to a spreadsheet), cost comparison, manual moves, and dimension lines.
 
 ## Layout
 
 ```
-index.html                 built, standalone viewer
+index.html                 built, standalone app
 src/head.html              markup and styles
-src/app.html               viewer and packing logic (three.js module)
-data/sections.json         section outlines, hulls and weights for each section type
-tools/build.py             rebuilds index.html from src/ and data/
-tools/geometry/            scripts that derived the section data from the Rhino file
+src/app.html               app logic (three.js module)
+projects/                  project files and index.json
+tools/build.py             rebuilds index.html from src/
+tools/geometry/            scripts that derived the arches project from its Rhino model
 ```
 
-## Rebuilding
-
-Edit `src/` or `data/`, then run `python3 tools/build.py`.
-
-## Regenerating the section data
-
-The scripts in `tools/geometry/` read the Rhino model (not included in this repo) with `rhino3dm` and `numpy`, and were run in order from one working folder:
-
-1. `01_parts.py <model.3dm>`: classifies every closed outline as tube or flat and measures its length.
-2. `02_curvature.py <model.3dm>`: splits curved rails into straight and arc portions and fits roll radii.
-3. `03_marks_and_nest.py`: assigns part marks and nests the cut list onto 24' sticks.
-4. `04_sections.py <model.3dm>`: groups pieces into bolt-together sections and measures them.
-5. `05_export_sections.py`: writes the section outlines, hulls and weights used by the viewer.
+Edit `src/`, then run `python3 tools/build.py`.

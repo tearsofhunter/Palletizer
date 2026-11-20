@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Arch Pallet Pack 3D</title>
+<title>Palletizer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -18,6 +18,7 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45}
 .app{display:grid;grid-template-columns:350px 1fr;height:100%}
 aside{overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:16px 14px 28px;display:flex;flex-direction:column;gap:14px}
@@ -78,6 +79,30 @@ details>summary::before{content:"▸ ";color:var(--muted)} details[open]>summary
 #tip b{font-family:var(--display);font-size:14px}
 .legend-float{position:absolute;left:12px;bottom:12px;background:rgba(26,30,34,.9);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px 12px;max-width:calc(100% - 24px)}
 .legend-float span{display:inline-flex;align-items:center;gap:6px}
+.dimbtn{position:absolute;left:12px;top:10px;font:inherit;font-size:12px;color:var(--ink);background:rgba(26,30,34,.88);border:1px solid var(--line);border-radius:999px;padding:5px 12px 5px 28px;cursor:pointer}
+.dimbtn::before{content:"";position:absolute;left:10px;top:50%;width:10px;height:10px;margin-top:-5px;border-radius:2px;border:1.5px solid var(--muted)}
+.dimbtn[aria-pressed="true"]::before{background:var(--accent);border-color:var(--accent)}
+.projbar h1{font-size:20px}
+.menu{display:flex;flex-direction:column;gap:2px;background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:4px;margin-top:6px}
+.menu button{font:inherit;color:var(--ink);background:none;border:0;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
+.menu button:hover,.menu button:focus-visible{background:var(--panel)}
+.menu .danger{color:var(--bad)}
+.stack{display:flex;flex-direction:column;gap:14px}
+.tablewrap{overflow-x:auto}
+.tablewrap table{font-size:12.5px}
+.tablewrap td input[type=number]{width:58px;padding:2px 4px}
+.tablewrap td input[type=text]{width:100%;min-width:70px;padding:2px 4px;font-size:12.5px}
+.tablewrap th{position:static}
+.thumb{display:block;width:44px;height:44px}
+.items{display:flex;flex-direction:column;gap:8px}
+.it{display:grid;grid-template-columns:44px 1fr;gap:4px 10px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.it .nm input{width:100%;font-weight:500}
+.it .meta{grid-column:2;color:var(--muted);font-size:12px}
+.it .flds{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.it .flds label{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--muted)}
+.it .flds input{width:100%}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:var(--muted);font-size:14px;line-height:1.6;pointer-events:none}
+.empty b{color:var(--ink)}
 .top-hint{position:absolute;right:12px;top:10px;font-size:12px;color:var(--muted);background:rgba(26,30,34,.85);padding:5px 9px;border-radius:6px}
 #modal{position:absolute;inset:0;background:rgba(10,12,14,.72);display:none;align-items:center;justify-content:center;padding:20px;z-index:5}
 #modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(980px,100%);max-height:100%;display:flex;flex-direction:column}
@@ -97,10 +122,58 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
 <body>
 <div class="app">
 <aside>
-  <div>
-    <h1>Arch pallet pack</h1>
-    <p class="sub">30 aluminum arches as 116 bolt-together sections plus 24 bottom bars. Pack them on LTL pallets or in a rental or box truck.</p>
+  <div class="projbar">
+    <div class="row" style="margin:0"><h1>Palletizer</h1><span class="hint" id="storeNote"></span></div>
+    <label class="label" for="projSel" style="margin:6px 0 4px;display:block">Project</label>
+    <div class="row" style="margin:0;gap:6px">
+      <select id="projSel" style="flex:1;min-width:0"></select>
+      <button class="btn" id="projMenuBtn" aria-haspopup="true" aria-expanded="false">⋯</button>
+    </div>
+    <div id="projMenu" class="menu" hidden>
+      <button id="pmRename">Rename</button>
+      <button id="pmDup">Duplicate (try another pack)</button>
+      <button id="pmExport">Export project file</button>
+      <button id="pmImport">Import project file…</button>
+      <button id="pmDelete" class="danger">Delete project</button>
+    </div>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+    <p class="sub" id="projSummary"></p>
   </div>
+
+  <div class="seg" role="tablist" aria-label="Panel">
+    <button id="tabPack" role="tab" aria-pressed="true"><b>Pack</b><span>pallets or truck</span></button>
+    <button id="tabItems" role="tab" aria-pressed="false"><b>Items</b><span>groups &amp; quantities</span></button>
+  </div>
+
+  <div id="itemsView" hidden>
+    <section class="card">
+      <p class="label">Groups</p>
+      <div id="groupsTable"></div>
+    </section>
+    <section class="card" style="margin-top:14px">
+      <p class="label">Items to ship</p>
+      <div id="itemsTable" class="tablewrap"></div>
+      <details style="margin-top:10px">
+        <summary>Add a box item (crate, bundle, carton)</summary>
+        <div class="dims">
+          <label for="bxName">Name</label><input id="bxName" type="text" placeholder="e.g. Hardware crate">
+          <label for="bxL">Length (in)</label><input id="bxL" type="number" min="0" step="0.25" value="24">
+          <label for="bxH">Height (in)</label><input id="bxH" type="number" min="0" step="0.25" value="12">
+          <label for="bxT">Thickness (in)</label><input id="bxT" type="number" min="0" step="0.25" value="12">
+          <label for="bxQ">Quantity</label><input id="bxQ" type="number" min="1" step="1" value="1">
+          <label for="bxW">Weight each (lb)</label><input id="bxW" type="number" min="0" step="0.5" value="20">
+        </div>
+        <button class="btn primary" id="bxAdd" style="margin-top:8px">Add box item</button>
+      </details>
+      <p class="hint" style="margin:10px 0 0">To add a project from a Rhino model, send the model to Claude in chat. Claude works out the shippable pieces, quantities and weights and adds the project here.</p>
+    </section>
+    <section class="card" style="margin-top:14px">
+      <p class="label">Pallet settings</p>
+      <div class="dims" id="palletSettings"></div>
+    </section>
+  </div>
+
+  <div id="packView" class="stack">
 
   <div class="seg" role="group" aria-label="Shipping mode">
     <button id="modeP" aria-pressed="true"><b>Pallets</b><span>LTL freight</span></button>
@@ -108,7 +181,7 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
   </div>
 
   <section class="card">
-    <p class="label" style="margin-bottom:4px">Velcro clearance</p>
+    <p class="label" style="margin-bottom:4px">Packing tolerance</p>
     <div class="row"><label for="clear">Space on each side of a piece</label><output id="clearOut" class="mono" for="clear">⅛"</output></div>
     <input id="clear" type="range" min="0" max="1" step="0.0625" value="0.125" style="width:100%">
     <p class="label" style="margin:10px 0 6px">Comb teeth between slots</p>
@@ -138,7 +211,7 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
   <section class="card">
     <p class="label">Load sequence</p>
     <div class="row"><label for="prio">Unload first (load last)</label>
-      <select id="prio"><option value="">No preference</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></div>
+      <select id="prio"><option value="">No preference</option></select></div>
     <div class="stepbar">
       <button class="btn" id="stepPrev" aria-label="Previous step">◀</button>
       <button class="btn" id="stepPlay" style="min-width:64px">Play</button>
@@ -149,7 +222,7 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
   </section>
 
   <section>
-    <p class="label">Highlight an arch</p>
+    <p class="label">Highlight a group</p>
     <div class="chips" id="arches"></div>
   </section>
 
@@ -190,17 +263,21 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
     <div class="row"><label for="spread">Spread slots apart</label><input id="spread" type="range" min="1" max="5" step="0.25" value="1" style="width:140px"></div>
     <div class="row"><label for="rack">Rack, pallet and truck body</label><input id="rack" type="checkbox" checked></div>
     <div class="row"><label for="sup">Ribs, foam and spacers</label><input id="sup" type="checkbox" checked></div>
-    <div class="row"><label for="velc">Velcro clearance layer</label><input id="velc" type="checkbox" checked></div>
+    <div class="row"><label for="velc">Tolerance envelope</label><input id="velc" type="checkbox" checked></div>
     <div class="row"><label for="limit">7'-6" line on pallets</label><input id="limit" type="checkbox" checked></div>
-    <div class="row"><label for="colorby">Color by</label><select id="colorby"><option value="arch">Arch (A–E)</option><option value="sec">Section type</option></select></div>
+    <div class="row"><label for="dims">Dimension lines</label><input id="dims" type="checkbox" checked></div>
+    <div class="row"><label for="colorby">Color by</label><select id="colorby"><option value="group">Group</option><option value="item">Item</option></select></div>
   </details>
 
-  <p class="note">Section shapes, sizes and weights come from your Rhino file (aluminum only, 0.125" wall tube). Racks, ribs, foam and pallets are schematic. Drag to orbit, right-drag to pan, scroll to zoom.</p>
+  </div>
+  <p class="note" id="footNote">Item shapes, sizes and weights come from the project's source model. Racks, ribs, foam and pallets are schematic. Drag to orbit, right-drag to pan, scroll to zoom.</p>
 </aside>
 <div id="stage">
   <div id="tip"></div>
   <div class="top-hint" id="topHint">Drag to orbit · scroll to zoom</div>
+  <button class="dimbtn" id="dimsToggle" aria-pressed="true" title="Show or hide dimension lines">Dimensions</button>
   <div class="legend-float" id="legend"></div>
+  <div id="empty" class="empty" hidden></div>
   <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="box">
       <header><h2 id="modalTitle">Packing list</h2><div style="display:flex;gap:6px"><button class="btn" id="modalCopy">Copy for spreadsheet</button><button class="btn" id="modalClose">Close</button></div></header>

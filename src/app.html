@@ -2,19 +2,117 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const DATA = JSON.parse(document.getElementById('data').textContent);
-const TY = DATA.types, COUNTS = DATA.counts;
 const $ = id => document.getElementById(id);
 const stage = $('stage'), tip = $('tip');
 const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const clone = o => JSON.parse(JSON.stringify(o));
 
-// ---------------- constants ----------------
-const ARCH_COL = { A:'#5aa9ff', B:'#3fcf9e', C:'#b691ff', D:'#ff8a5b', E:'#f2c94c' };
-const SEC_COL = { leg:'#4a8fd6', lower:'#5cb85c', upper:'#f0883e', half:'#b691ff', bar:'#e5534b' };
-const SEC_NAME = { leg:'Straight leg', lower:'Lower curve', upper:'Upper curve / to apex', half:'D half-arch', bar:'Bottom-bar bundle' };
-const QTY = { A:2, B:2, C:2, D:8, E:16 };
-const SPACER = 1.75;                 // fixed spacer block between pieces sharing a slot
-const PAL = { W:48, D:40, POST:1.5, RACK_IN:45, DEPTH_IN:37, STD_CLEAR:82 };
+// =====================================================================================
+// Project storage. On claude.ai the page keeps projects in its own database (one record
+// per project plus its geometry); elsewhere (a GitHub copy, signed out) it falls back to
+// project files in ./projects/ plus this browser's local storage.
+// =====================================================================================
+const DEFAULT_SETTINGS = { tol:0.125, tooth:0.375, pallet:{ L:48, W:40, deckStd:5.5, deckLow:4, maxH:90, tallMaxH:96 } };
+const DEFAULT_SHIPPING = { mode:'P', vehicle:'uh26', veh:null, prio:'', moves:{ P:{}, T:{} }, costs:{} };
+function normalize(p){
+  p.settings = Object.assign(clone(DEFAULT_SETTINGS), p.settings || {});
+  p.settings.pallet = Object.assign(clone(DEFAULT_SETTINGS.pallet), (p.settings||{}).pallet || {});
+  p.shipping = Object.assign(clone(DEFAULT_SHIPPING), p.shipping || {});
+  p.shipping.moves = Object.assign({ P:{}, T:{} }, p.shipping.moves || {});
+  p.groups = p.groups || []; p.items = p.items || []; p.edits = p.edits || {}; p.extraItems = p.extraItems || [];
+  return p;
+}
+const META_KEYS = ['id','name','notes','source','created','updated','settings','groups','shipping','edits','extraItems'];
+const CHUNK = 180000;   // bytes of geometry per database record (records cap at 256 KiB)
+
+// Project files that Claude adds next to the page (./projects/*.json). Ones not yet in the
+// database are listed as new; opening one copies it into the database.
+async function loadBundled(){
+  const out = {};
+  try { const r = await fetch('./projects/index.json', { cache:'no-store' }); if(r.ok){ const idx = await r.json();
+    for(const f of idx.projects||[]){ try { const pr = await (await fetch('./projects/' + f, { cache:'no-store' })).json(); if(pr && pr.id) out[pr.id] = pr; } catch {} } } } catch {}
+  return out;
+}
+const DbStore = db => ({
+  kind:'db', bundled:{},
+  async init(){ this.bundled = await loadBundled(); },
+  async list(){
+    const s = await db.collection('projects').get(); const rows = s.docs.map(d => d.data()).filter(Boolean);
+    const have = new Set(rows.map(r => r.id));
+    Object.values(this.bundled).forEach(p => { if(!have.has(p.id)) rows.push({ id:p.id, name:p.name + ' · new', updated:p.updated, _file:true }); });
+    return rows.sort((a,b) => (b.updated||'').localeCompare(a.updated||''));
+  },
+  async load(id){
+    const m = await db.doc('projects/' + id).get();
+    if(!m.exists){ const f = this.bundled[id]; if(!f) return null; const p = normalize(clone(f)); await this.create(p); setNote('Added to your projects'); return p; }
+    const meta = clone(m.data()); const items = [];
+    for(let i=0;i<(meta.geomChunks||0);i++){ const g = await db.doc(`projects/${id}/geom/g${i}`).get(); if(g.exists) items.push(...(g.data().items||[])); }
+    meta.items = items; return normalize(meta);
+  },
+  async saveMeta(p){ const m = {}; META_KEYS.forEach(k => { if(p[k] !== undefined) m[k] = p[k]; }); m.geomChunks = p.geomChunks || 0; await db.doc('projects/' + p.id).set(m); },
+  async create(p){
+    const chunks = []; let cur = [], size = 0;
+    p.items.forEach(it => { const s = JSON.stringify(it).length; if(size + s > CHUNK && cur.length){ chunks.push(cur); cur = []; size = 0; } cur.push(it); size += s; });
+    if(cur.length) chunks.push(cur);
+    for(let i=0;i<chunks.length;i++) await db.doc(`projects/${p.id}/geom/g${i}`).set({ items:chunks[i] });
+    p.geomChunks = chunks.length; await this.saveMeta(p);
+  },
+  async remove(p){ for(let i=0;i<(p.geomChunks||0);i++) await db.doc(`projects/${p.id}/geom/g${i}`).delete(); await db.doc('projects/' + p.id).delete(); }
+});
+const LS_KEY = 'palletizer.projects.v1';
+function lsRead(){ try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch { return {}; } }
+function lsWrite(o){ try { localStorage.setItem(LS_KEY, JSON.stringify(o)); return true; } catch { return false; } }
+const LocalStore = () => ({
+  kind:'local', bundled:{},
+  async init(){ this.bundled = await loadBundled(); },
+  async list(){ const loc = lsRead(); const all = Object.assign({}, this.bundled, loc); return Object.values(all).filter(p => !p._deleted).map(p => { const m = {}; META_KEYS.forEach(k => m[k] = p[k]); return m; }).sort((a,b) => (b.updated||'').localeCompare(a.updated||'')); },
+  async load(id){ const loc = lsRead(); const p = loc[id] || this.bundled[id]; return p && !p._deleted ? normalize(clone(p)) : null; },
+  async saveMeta(p){ const loc = lsRead(); loc[p.id] = clone(p); if(!lsWrite(loc)) throw new Error('local storage is unavailable'); },
+  async create(p){ return this.saveMeta(p); },
+  async remove(p){ const loc = lsRead(); if(this.bundled[p.id]) loc[p.id] = { id:p.id, _deleted:true }; else delete loc[p.id]; lsWrite(loc); }
+});
+let store = null, PROJ = null, projList = [];
+async function getStore(){
+  if(window.claude && typeof window.claude.use === 'function'){
+    try { const db = await Promise.race([window.claude.use('db'), new Promise(r => setTimeout(() => r(null), 10000))]); if(db){ const s = DbStore(db); await s.init(); return s; } } catch {}
+  }
+  const s = LocalStore(); await s.init(); return s;
+}
+let saveTimer = null, saving = Promise.resolve();
+function scheduleSave(){
+  if(!PROJ || !store) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { PROJ.updated = new Date().toISOString(); const snap = clone(PROJ);
+    saving = saving.then(() => store.saveMeta(snap)).then(() => setNote('Saved'), e => setNote("Couldn't save: " + (e.message || e.code || 'error'), true)); }, 700);
+}
+function setNote(t, bad){ const el = $('storeNote'); el.textContent = t; el.style.color = bad ? 'var(--bad)' : ''; if(!bad) setTimeout(() => { if(el.textContent === t) el.textContent = store?.kind === 'db' ? '' : 'saved in this browser'; }, 1500); }
+function newId(name){ return (name||'project').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40) + '-' + Math.random().toString(36).slice(2,7); }
+
+// =====================================================================================
+// Project model → item definitions and instances
+// =====================================================================================
+const PALETTE = ['#5aa9ff','#3fcf9e','#b691ff','#ff8a5b','#f2c94c','#e86a92','#5fd3e6','#a6d65a','#d99a5c','#9aa7ff'];
+let DEFS = {}, ITEMS = [], GROUPS = {};
+function groupColor(gid){ const g = GROUPS[gid]; if(g && g.color) return g.color; const i = Object.keys(GROUPS).indexOf(gid); return PALETTE[(i<0?0:i) % PALETTE.length]; }
+function itemColor(id){ const i = Object.keys(DEFS).indexOf(id); return '#' + new THREE.Color().setHSL(((i*0.618) % 1), 0.55, 0.62).getHexString(); }
+function rectHull(l,h){ return [[-l/2,-h/2],[l/2,-h/2],[l/2,h/2],[-l/2,h/2]]; }
+function totalQty(d){ if(d.qty != null) return d.qty; const g = GROUPS[d.group]; return (d.perGroup||0) * (g ? (g.qty||0) : 1); }
+function deriveModel(){
+  GROUPS = {}; PROJ.groups.forEach(g => GROUPS[g.id] = g);
+  DEFS = {};
+  PROJ.items.concat(PROJ.extraItems).forEach(src => {
+    const d = Object.assign({}, src, PROJ.edits[src.id] || {});
+    if(d.kind === 'box'){ d.hull = rectHull(d.box.l, d.box.h); d.pieces = [{ k:'main', p:rectHull(d.box.l, d.box.h) }]; d.t = d.t || d.box.t || 1; }
+    d.t = d.t || 1; d.total = Math.max(0, Math.round(totalQty(d)));
+    DEFS[d.id] = d;
+  });
+  ITEMS = []; Object.values(DEFS).forEach(d => { for(let i=1;i<=d.total;i++) ITEMS.push({ uid:`${d.id}#${i}`, type:d.id, n:i }); });
+  oCache.clear(); gCache.forEach(g => { g.pieces.forEach(p => p.geo.dispose()); g.rib && g.rib.dispose(); }); gCache.clear();
+}
+
+// =====================================================================================
+// Vehicles
+// =====================================================================================
 const VEHICLES = {
   uh10:  { name:"U-Haul 10' truck",  L:118, W:75, H:73, insideL:119, doorW:71, doorH:67, deckH:29, ramp:0,  maxLoad:2850,  wells:true,  atticH:0,  liftgate:false },
   uh15:  { name:"U-Haul 15' truck",  L:149, W:92, H:86, insideL:180, doorW:87, doorH:77, deckH:33, ramp:26, maxLoad:6385,  wells:true,  atticH:31, liftgate:false },
@@ -29,58 +127,72 @@ const DIM_FIELDS = [
 ];
 function vehDefaults(key){ const v = Object.assign({}, VEHICLES[key]); Object.assign(v, { wellL:36, wellW:9, wellH:10, wellX:Math.round(v.L*0.62) }); return v; }
 
-const state = { mode:'P', tooth:0.375, clear:0.125, spread:1, rack:true, sup:true, velc:true, limit:true, color:'arch', arch:'all',
-  sel:null, vehicle:'uh26', veh:vehDefaults('uh26'), prio:'', step:null, moves:{ P:{}, T:{} } };
+// UI state that is not saved with the project
+const view = { spread:1, rack:true, sup:true, velc:true, limit:true, dims:true, color:'group', group:'all', sel:null, step:null, tab:'pack' };
+// shorthand accessors for the saved settings
+const S = () => PROJ.settings, SH = () => PROJ.shipping, PS = () => PROJ.settings.pallet;
+const veh = () => { if(!SH().veh) SH().veh = vehDefaults(SH().vehicle); return SH().veh; };
 
-function secKind(t){ if(t.startsWith('BB')) return 'bar'; if(t==='D1') return 'half'; if(t==='E2') return 'upper'; return {1:'leg',2:'lower',3:'upper'}[t[1]]; }
-function archOf(t){ return t.startsWith('BB') ? t.slice(3) : t[0]; }
-const ITEMS = []; Object.entries(COUNTS).forEach(([t,n]) => { for(let i=1;i<=n;i++) ITEMS.push({ uid:`${t}#${i}`, type:t, n:i }); });
-
-// ---------------- formatting ----------------
+// =====================================================================================
+// Formatting
+// =====================================================================================
 function frac(v){
+  const neg = v < 0; v = Math.abs(v);
   const n = Math.round(v*16), whole = Math.floor(n/16), r = n % 16;
-  if(!r) return `${whole}"`;
+  if(!r) return `${neg?'-':''}${whole}"`;
   let num = r, den = 16; while(num % 2 === 0){ num/=2; den/=2; }
-  const f = ({ '1/2':'½','1/4':'¼','3/4':'¾','1/8':'⅛','3/8':'⅜','5/8':'⅝','7/8':'⅞' })[`${num}/${den}`] || `-${num}/${den}`;
-  return whole ? `${whole}${f}"` : `${f.replace('-','')}"`;
+  const f = ({ '1/2':'½','1/4':'¼','3/4':'¾','1/8':'⅛','3/8':'⅜','5/8':'⅝','7/8':'⅞' })[`${num}/${den}`];
+  return `${neg?'-':''}${whole ? whole : ''}${f ? f : (whole ? '-' : '') + num + '/' + den}"`;
 }
 function ftin(v){ const ft = Math.floor(Math.round(v*16)/16/12); return `${ft}'-${frac(v - ft*12)}`; }
 const lb = v => `${Math.round(v).toLocaleString()} lb`;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]);
 
-// ---------------- orientation of a section in its slot plane ----------------
-// Each section stands upright in its own slot. We spin it in its plane to the angle that uses the least
-// length along the slot while staying under the slot's clear height.
+// =====================================================================================
+// Orientation: each item stands upright in its own slot. Spin it in its plane to the angle that
+// uses the least length along the slot while staying under the slot's clear height.
+// =====================================================================================
 const oCache = new Map();
 function orient(type, H){
   const key = type + '|' + H.toFixed(3); if(oCache.has(key)) return oCache.get(key);
-  const t = TY[type]; let r;
-  if(t.bar){ r = { a:0, w:3, h:t.len, ox:1.5, oy:t.len/2, ok: t.len <= H }; }
-  else {
-    let best = null, low = null;
-    for(let a=0; a<180; a+=0.5){
-      const c = Math.cos(a*Math.PI/180), s = Math.sin(a*Math.PI/180);
-      let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
-      for(const [px,py] of t.hull){ const x = px*c - py*s, y = px*s + py*c; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
-      const o = { a, w:x1-x0, h:y1-y0, ox:-x0, oy:-y0 };
-      if(o.h <= H && (!best || o.w < best.w - 1e-6)) best = o;
-      if(!low || o.h < low.h) low = o;
-    }
-    r = best ? Object.assign(best, { ok:true }) : Object.assign(low, { ok:false });
+  const d = DEFS[type]; let best = null, low = null;
+  const step = d.kind === 'box' ? 90 : 0.5;
+  for(let a=0; a<180; a+=step){
+    const c = Math.cos(a*Math.PI/180), s = Math.sin(a*Math.PI/180);
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+    for(const [px,py] of d.hull){ const x = px*c - py*s, y = px*s + py*c; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+    const o = { a, w:x1-x0, h:y1-y0, ox:-x0, oy:-y0 };
+    if(o.h <= H && (!best || o.w < best.w - 1e-6)) best = o;
+    if(!low || o.h < low.h) low = o;
   }
+  const r = best ? Object.assign(best, { ok:true }) : Object.assign(low, { ok:false });
   oCache.set(key, r); return r;
 }
-function xform(type, o){ // rotated + offset outline points for each piece of a section
+function xform(type, o){
   const c = Math.cos(o.a*Math.PI/180), s = Math.sin(o.a*Math.PI/180);
-  return TY[type].pieces.map(pc => ({ k:pc.k, p:pc.p.map(([x,y]) => [x*c - y*s + o.ox, x*s + y*c + o.oy]) }));
+  return DEFS[type].pieces.map(pc => ({ k:pc.k, p:pc.p.map(([x,y]) => [x*c - y*s + o.ox, x*s + y*c + o.oy]) }));
 }
 
-// ---------------- packing ----------------
-function slotGeom(){ const c = state.clear, slotw = 1 + 2*c, pitch = slotw + state.tooth; return { c, slotw, pitch, gap: SPACER + 2*c }; }
+// =====================================================================================
+// Packing. A bay (pallet rack or truck) holds slots side by side across its depth. A slot is
+// as wide as the thickest item in it plus the packing tolerance on each face; comb teeth sit
+// between slots. Items line up along each slot, separated by spacer blocks.
+// =====================================================================================
+const SPACER = 1.75, POST = 1.5;
+function geomBase(){ const c = S().tol; return { c, tooth:S().tooth, gap:SPACER + 2*c }; }
+function palletDims(){ const p = PS(); return { len:p.L, dep:p.W, rackIn:p.L - 2*POST, depthIn:p.W - 2*POST,
+  stdClear: p.maxH - p.deckStd - 0.75 - 0.25 - 1.5 }; }
 function itemW(type, bay){ return orient(type, bay.clearH).w; }
-function tryPlace(bay, si, it, rear){
-  const slot = bay.slots[si]; if(!slot) return false;
-  const w = itemW(it.type, bay), g = bay.geom.gap;
-  if(!orient(it.type, bay.clearH).ok) return false;
+function addSlot(bay, t){
+  const G = bay.geom, sw = t + 2*G.c;
+  const z = bay.depthUsed; if(z + sw + G.tooth > bay.depthBudget + 1e-6) return null;
+  const slot = { t, sw, z, items:[], segs:bay.segsFor(z, z + sw) };
+  bay.depthUsed = z + sw + G.tooth; bay.slots.push(slot); return slot;
+}
+function tryPlaceIn(bay, slot, it, rear){
+  const d = DEFS[it.type]; if(Math.abs(slot.t - d.t) > 1e-6) return false;
+  const o = orient(it.type, bay.clearH); if(!o.ok) return false;
+  const w = o.w, g = bay.geom.gap;
   for(const seg of slot.segs){
     if(!rear){
       const x = seg.front + (seg.nf ? g : 0);
@@ -92,94 +204,98 @@ function tryPlace(bay, si, it, rear){
   }
   return false;
 }
-function firstFit(bays, it, filter, rear){
-  for(let b=0;b<bays.length;b++){ if(filter && !filter(bays[b])) continue;
-    const order = bays[b].order || bays[b].slots.map((_,i)=>i);
-    for(const s of order) if(tryPlace(bays[b], s, it, rear)) return true; }
+function placeInBay(bay, it, rear){
+  const order = bay.order ? bay.order(bay.slots.length) : bay.slots.map((_,i)=>i);
+  for(const s of order) if(bay.slots[s] && tryPlaceIn(bay, bay.slots[s], it, rear)) return true;
+  const slot = addSlot(bay, DEFS[it.type].t); if(slot && tryPlaceIn(bay, slot, it, rear)) return true;
   return false;
 }
-function tallClearFor(cap){
-  for(let H=PAL.STD_CLEAR; H<=110; H+=0.25){ if(orient('E2', H).w <= cap) return H; }
-  return 110;
+function tallNeed(type, cap){   // clear height an item needs to fit the rack width standing up
+  for(let H = palletDims().stdClear; H <= 160; H += 0.25){ if(orient(type, H).w <= cap) return H; }
+  return Infinity;
 }
-function newPallet(tall, G){
-  const cap = PAL.RACK_IN - 2*G.c;
-  const clearH = tall ? tallClearFor(cap) : PAL.STD_CLEAR;
-  const maxslots = Math.max(1, Math.floor((PAL.DEPTH_IN - G.slotw)/G.pitch) + 1);
-  const x0 = PAL.POST + G.c, x1 = PAL.W - PAL.POST - G.c;
-  const slots = Array.from({ length:maxslots }, () => ({ items:[], segs:[{ front:x0, rear:x1, nf:0, nr:0 }] }));
-  const deckH = tall ? 4 : 5.5, railT = tall ? 1 : 1.5;
-  const top = deckH + 0.75 + clearH + 0.25 + railT;
-  return { kind:'pallet', tall, clearH, slots, maxslots, geom:G, cap, deckH, railT, top, len:PAL.W, depth:PAL.D };
+function newPallet(tall, G, tallClear){
+  const P = palletDims(), ps = PS();
+  const clearH = tall ? tallClear : P.stdClear;
+  const deckH = tall ? ps.deckLow : ps.deckStd, railT = tall ? 1 : 1.5;
+  const x0 = POST + G.c, x1 = P.len - POST - G.c;
+  const bay = { kind:'pallet', tall, clearH, slots:[], geom:G, len:P.len, dep:P.dep, deckH, railT,
+    top: deckH + 0.75 + clearH + 0.25 + railT, depthUsed:G.tooth, depthBudget:P.depthIn,
+    segsFor: () => [{ front:x0, rear:x1, nf:0, nr:0 }] };
+  bay.cap = x1 - x0; return bay;
 }
-function orderOthers(list){
-  const groups = [['A','B','C','BB'], ['D','E']];
-  const rank = it => { const a = archOf(it.type); return a === state.prio ? 2 : (groups[0].includes(a) || it.type.startsWith('BB') ? 0 : 1); };
-  return list.slice().sort((p,q) => rank(p) - rank(q) || (orient(q.type,82).w - orient(p.type,82).w));
-}
+function groupRank(it){ const g = DEFS[it.type].group; const ids = PROJ.groups.map(x=>x.id); return g === SH().prio ? 999 : Math.max(0, ids.indexOf(g)); }
 function packPallets(template, moves){
-  const G = slotGeom(); const bays = (template || []).map(t => newPallet(t, G));
-  const placed = new Set(), rejected = [];
+  const G = geomBase(), P = palletDims(), cap = P.rackIn - 2*G.c;
+  const needs = {}; Object.keys(DEFS).forEach(t => { const o = orient(t, P.stdClear); needs[t] = (o.ok && o.w <= cap) ? 0 : tallNeed(t, cap); });
+  const tallTypes = Object.keys(needs).filter(t => needs[t] > 0 && isFinite(needs[t]));
+  const tallClearNeeded = tallTypes.length ? Math.max(...tallTypes.map(t => needs[t])) : P.stdClear;
+  const tallTop = PS().deckLow + 0.75 + tallClearNeeded + 0.25 + 1;
+  const tallOK = tallTop <= PS().tallMaxH + 1e-6;
+  const bays = (template || []).map(t => newPallet(t, G, tallClearNeeded));
+  const placed = new Set(), rejected = [], left = [];
   Object.entries(moves || {}).forEach(([uid, m]) => {
-    const it = ITEMS.find(i => i.uid === uid);
-    if(it && bays[m.bay] && tryPlace(bays[m.bay], m.slot, it)) placed.add(uid); else rejected.push(uid);
+    const it = ITEMS.find(i => i.uid === uid); const b = bays[m.bay];
+    let ok = false;
+    if(it && b){ while(b.slots.length <= m.slot && addSlot(b, DEFS[it.type].t)); ok = !!b.slots[m.slot] && tryPlaceIn(b, b.slots[m.slot], it); }
+    if(ok) placed.add(uid); else rejected.push(uid);
   });
-  const e2 = ITEMS.filter(i => i.type === 'E2' && !placed.has(i.uid));
-  e2.forEach(it => { if(!firstFit(bays, it, b => b.tall)){ bays.push(newPallet(true, G)); tryPlace(bays[bays.length-1], 0, it); } });
-  orderOthers(ITEMS.filter(i => i.type !== 'E2' && !placed.has(i.uid))).forEach(it => {
-    if(!firstFit(bays, it)){ const b = newPallet(false, G); bays.push(b); if(!firstFit([b], it)) b.overflow = (b.overflow||[]).concat(it); }
+  const isTall = t => needs[t] > 0;
+  const tallItems = ITEMS.filter(i => isTall(i.type) && !placed.has(i.uid));
+  tallItems.forEach(it => {
+    if(!tallOK || !isFinite(needs[it.type])){ left.push(it); return; }
+    if(bays.some(b => b.tall && placeInBay(b, it))) return;
+    const b = newPallet(true, G, tallClearNeeded); bays.push(b); if(!placeInBay(b, it)) left.push(it);
   });
-  return { bays, rejected };
+  const rest = ITEMS.filter(i => !isTall(i.type) && !placed.has(i.uid))
+    .sort((p,q) => groupRank(p) - groupRank(q) || DEFS[q.type].t - DEFS[p.type].t || itemW(q.type, { clearH:P.stdClear }) - itemW(p.type, { clearH:P.stdClear }));
+  rest.forEach(it => {
+    if(bays.some(b => placeInBay(b, it))) return;
+    const b = newPallet(false, G, tallClearNeeded); bays.push(b); if(!placeInBay(b, it)){ bays.pop(); left.push(it); }
+  });
+  return { bays, rejected, left, tallTop, tallOK };
 }
 function makeTruckBay(G){
-  const v = state.veh, c = G.c;
+  const v = veh(), c = G.c;
   const clearH = v.H - 1.5 - 1.0 - 0.5;
-  const usableW = v.W - 3;
-  const maxslots = Math.max(1, Math.floor((usableW - G.slotw)/G.pitch) + 1);
   const x0 = 1.5 + c, x1 = v.L - 2 - c;
-  const slots = [];
-  for(let s=0;s<maxslots;s++) slots.push({ items:[], segs:[] });
-  const mid = (maxslots-1)/2;
-  const order = slots.map((_,i)=>i).sort((a,b) => Math.abs(a-mid) - Math.abs(b-mid) || a - b);   // fill from the centerline out, alternating sides
-  const bay = { kind:'truck', clearH, slots, maxslots, geom:G, len:v.L, depth:v.W, deckH:v.deckH, order };
-  // slot z positions are computed in render; wheel wells block the floor in slots that sit over them
-  slots.forEach((sl, s) => {
-    const zs = 1.5 + state.tooth + s*G.pitch, ze = zs + G.slotw;
-    const overWell = v.wells && (zs < v.wellW || ze > v.W - v.wellW);
-    if(overWell){
-      const a = v.wellX - v.wellL/2 - c, b = v.wellX + v.wellL/2 + c;
-      if(a - x0 > 4) sl.segs.push({ front:x0, rear:a, nf:0, nr:0 });
-      if(x1 - b > 4) sl.segs.push({ front:b, rear:x1, nf:0, nr:0 });
-    } else sl.segs.push({ front:x0, rear:x1, nf:0, nr:0 });
-  });
+  const bay = { kind:'truck', clearH, slots:[], geom:G, len:v.L, dep:v.W, deckH:v.deckH, depthUsed:G.tooth, depthBudget:v.W - 3 };
+  // wheel wells block the floor in slots that sit over them
+  bay.segsFor = (zs, ze) => {
+    const zA = 1.5 + zs, zB = 1.5 + ze;
+    if(v.wells && (zA < v.wellW || zB > v.W - v.wellW)){
+      const a = v.wellX - v.wellL/2 - c, b = v.wellX + v.wellL/2 + c, s = [];
+      if(a - x0 > 4) s.push({ front:x0, rear:a, nf:0, nr:0 }); if(x1 - b > 4) s.push({ front:b, rear:x1, nf:0, nr:0 }); return s;
+    }
+    return [{ front:x0, rear:x1, nf:0, nr:0 }];
+  };
   return bay;
 }
 function packTruck(moves){
-  const G = slotGeom(); const bay = makeTruckBay(G); const bays = [bay];
+  const G = geomBase(), bay = makeTruckBay(G), bays = [bay];
   const placed = new Set(), rejected = [], left = [];
   Object.entries(moves || {}).forEach(([uid, m]) => {
-    const it = ITEMS.find(i => i.uid === uid);
-    if(it && tryPlace(bay, m.slot, it)) placed.add(uid); else rejected.push(uid);
+    const it = ITEMS.find(i => i.uid === uid); let ok = false;
+    if(it){ while(bay.slots.length <= m.slot && addSlot(bay, DEFS[it.type].t)); ok = !!bay.slots[m.slot] && tryPlaceIn(bay, bay.slots[m.slot], it); }
+    if(ok) placed.add(uid); else rejected.push(uid);
   });
   const rest = ITEMS.filter(i => !placed.has(i.uid));
-  const byW = (p,q) => itemW(q.type, bay) - itemW(p.type, bay);
-  const pri = rest.filter(i => state.prio && archOf(i.type) === state.prio).sort(byW);
-  const oth = rest.filter(i => !(state.prio && archOf(i.type) === state.prio)).sort(byW);
-  pri.forEach(it => { if(!firstFit(bays, it, null, true)) left.push(it); });   // door end first
-  oth.forEach(it => { if(!firstFit(bays, it)) left.push(it); });               // cab end first
+  const byW = (p,q) => DEFS[q.type].t - DEFS[p.type].t || itemW(q.type, bay) - itemW(p.type, bay);
+  const isPri = i => SH().prio && DEFS[i.type].group === SH().prio;
+  rest.filter(isPri).sort(byW).forEach(it => { if(!placeInBay(bay, it, true)) left.push(it); });     // door end first
+  rest.filter(i => !isPri(i)).sort(byW).forEach(it => { if(!placeInBay(bay, it)) left.push(it); });   // cab end first
+  // re-center the used slots across the width (not when wheel wells fix where the floor is blocked)
+  const used = bay.depthUsed - G.tooth; bay.zShift = veh().wells ? 0 : Math.max(0, (bay.depthBudget - G.tooth - used)/2);
   return { bays, rejected, left };
 }
 let PLAN = null;
 function makePlan(){
   let res;
-  if(state.mode === 'P'){
-    const first = packPallets(null, null);
-    const moves = state.moves.P;
+  if(SH().mode === 'P'){
+    const first = packPallets(null, null), moves = SH().moves.P;
     res = Object.keys(moves).length ? packPallets(first.bays.map(b => b.tall), moves) : first;
-    res.left = [];
-  } else res = packTruck(state.moves.T);
-  res.rejected.forEach(uid => delete state.moves[state.mode][uid]);
-  // ids, loading sequence, weights, CG
+  } else res = packTruck(SH().moves.T);
+  res.rejected.forEach(uid => delete SH().moves[SH().mode][uid]);
   const seq = [];
   res.bays.forEach((b, bi) => {
     b.label = b.kind === 'pallet' ? `P${bi+1}` : 'Truck';
@@ -190,28 +306,32 @@ function makePlan(){
         it.bay = bi; it.slot = si; it.pos = k; it.n = sl.items.length;
         it.id = `${b.kind==='pallet' ? b.label : 'T'}-${String(si+1).padStart(2,'0')}${String.fromCharCode(97+k)}`;
         const o = orient(it.type, b.clearH); it.o = o; it.h = o.h;
-        const w = TY[it.type].lb; b.lb += w;
-        cg[0] += w*(it.x + o.ox); cg[1] += w*(o.oy); cg[2] += w*(si);
+        const w = DEFS[it.type].lb || 0; b.lb += w;
+        cg[0] += w*(it.x + o.ox); cg[1] += w*o.oy; cg[2] += w*(sl.z + sl.sw/2);
         seq.push(it);
       });
     });
     b.cg = b.lb ? cg.map(v => v / b.lb) : [0,0,0];
     b.count = b.slots.reduce((a,s) => a + s.items.length, 0);
     b.used = b.slots.filter(s => s.items.length).length;
+    const t1 = 1 + 2*b.geom.c; b.estSlots = Math.max(1, Math.floor((b.depthBudget - b.geom.tooth - t1)/(t1 + b.geom.tooth)) + 1);
   });
-  if(state.mode === 'T') seq.sort((p,q) => p.x - q.x || p.slot - q.slot);   // load from the cab end toward the door
+  if(SH().mode === 'T') seq.sort((p,q) => p.x - q.x || p.slot - q.slot);
   seq.forEach((it, i) => it.step = i+1);
-  PLAN = Object.assign(res, { seq, G: slotGeom() });
+  PLAN = Object.assign(res, { seq });
   return PLAN;
 }
 function labelFor(b){
   const types = b.slots.flatMap(s => s.items.map(i => i.type));
-  if(types.length && types.every(t => t==='E2')) return 'E2 curves';
-  const arches = [...new Set(types.filter(t => !t.startsWith('BB') && t !== 'E2').map(t => t[0]))].sort().join(', ');
-  return (types.includes('E2') ? 'E2 + ' : '') + (arches ? 'arches ' + arches : '') + (types.some(t => t.startsWith('BB')) ? ' + bars' : '');
+  const gs = [...new Set(types.map(t => DEFS[t].group).filter(Boolean))];
+  const names = gs.map(g => GROUPS[g]?.name || g);
+  if(!names.length) return `${types.length} items`;
+  return names.length > 3 ? `${names.slice(0,3).join(', ')} +${names.length-3}` : names.join(', ');
 }
 
-// ---------------- three.js setup ----------------
+// =====================================================================================
+// three.js
+// =====================================================================================
 const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'low-power' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 stage.prepend(renderer.domElement);
@@ -237,40 +357,35 @@ const VELC = mat('velc', '#e9f1f7', { transparent:true, opacity:0.16, depthWrite
 const GHOST = mat('ghost', '#8a949c', { transparent:true, opacity:0.08, depthWrite:false });
 const HILITE = mat('hi', '#ffffff', { emissive:'#f2b33d', emissiveIntensity:0.6 });
 const TRUCK_WALL = mat('twall', '#cfd6dd', { transparent:true, opacity:0.08, depthWrite:false });
-const TRUCK_BODY = mat('tbody', '#d9dee3');
-const TRUCK_DARK = mat('tdark', '#3a4047');
-const WELL = mat('well', '#6b737b');
-const ORANGE = mat('orange', '#e5732a');
+const TRUCK_BODY = mat('tbody', '#d9dee3'), TRUCK_DARK = mat('tdark', '#3a4047'), WELL = mat('well', '#6b737b');
 function shade(hex, f){ const c = new THREE.Color(hex); c.offsetHSL(0, -0.1, f); return '#'+c.getHexString(); }
 function pieceMat(type, kind){
-  const base = state.color==='arch' ? ARCH_COL[archOf(type)] : SEC_COL[secKind(type)];
-  const flat = (kind==='P' || kind==='PA' || kind==='bar'), rung = (kind==='R' || kind==='R2');
-  return mat(state.color+':'+base+(flat?':f':rung?':r':''), flat ? shade(base,-0.22) : rung ? shade(base,0.08) : base);
+  const base = view.color === 'group' ? groupColor(DEFS[type].group) : itemColor(type);
+  const flat = (kind === 'plate'), rung = (kind === 'rung');
+  return mat(view.color+':'+base+(flat?':f':rung?':r':''), flat ? shade(base,-0.22) : rung ? shade(base,0.08) : base);
 }
-
-// geometry cache, keyed by section + angle (angles come from a 0.5° grid, so this stays small)
 const gCache = new Map();
 function shapeOf(pts){ const s = new THREE.Shape(); s.moveTo(pts[0][0], pts[0][1]); for(let i=1;i<pts.length;i++) s.lineTo(pts[i][0], pts[i][1]); s.closePath(); return s; }
-function sectionGeo(type, o){
-  const key = type + '@' + o.a + '|' + o.ox.toFixed(3); if(gCache.has(key)) return gCache.get(key);
+function itemGeo(type, o){
+  const t = DEFS[type].t;
+  const key = type + '@' + o.a + '|' + o.ox.toFixed(3) + '|' + t; if(gCache.has(key)) return gCache.get(key);
   const pcs = xform(type, o);
-  const pieces = pcs.map(pc => ({ k:pc.k, geo:new THREE.ExtrudeGeometry(shapeOf(pc.p), { depth:1, bevelEnabled:false, curveSegments:1 }) }));
+  const pieces = pcs.map(pc => ({ k:pc.k, geo:new THREE.ExtrudeGeometry(shapeOf(pc.p), { depth:t, bevelEnabled:false, curveSegments:1 }) }));
   const pts = pcs.flatMap(pc => pc.p);
   const xs = pts.map(p => p[0]); const minX = Math.min(...xs), maxX = Math.max(...xs);
   const prof = []; for(let x=minX; x<=maxX+0.01; x+=0.5){ let m = 1e9; for(const p of pts) if(Math.abs(p[0]-x) < 0.5 && p[1] < m) m = p[1]; if(m < 1e9) prof.push([x, m]); }
   const lowX = pts.filter(p => p[1] <= 6).map(p => p[0]);
-  const plumb = (Math.max(...lowX) - Math.min(...lowX)) <= 9.5 && o.w <= 14;
+  const plumb = DEFS[type].kind === 'box' || ((Math.max(...lowX) - Math.min(...lowX)) <= 9.5 && o.w <= 14);
   let rib = null;
   if(!plumb){
     const lo = 0.75; const rp = [[prof[0][0], lo]].concat(prof.map(([x,y]) => [x, Math.max(y-0.25, lo+0.05)])).concat([[prof[prof.length-1][0], lo]]);
-    rib = new THREE.ExtrudeGeometry(shapeOf(rp), { depth:0.75, bevelEnabled:false, curveSegments:1 });
+    rib = new THREE.ExtrudeGeometry(shapeOf(rp), { depth:Math.max(0.5, t*0.75), bevelEnabled:false, curveSegments:1 });
   }
   const hiX = pts.filter(p => p[1] >= o.h - 3).map(p => p[0]);
   const r = { pieces, rib, pocket:[Math.min(...lowX), Math.max(...lowX)], cap:[Math.min(...hiX), Math.max(...hiX)] };
   gCache.set(key, r); return r;
 }
 
-// ---------------- scene build ----------------
 const root = new THREE.Group(); scene.add(root);
 let pickables = [], secGroups = [], disposables = [], bayInfo = [];
 function box(w,h,d,material,x,y,z,parent){
@@ -292,89 +407,125 @@ function lineLoop(pts, color, parent, dashed){
   const m = dashed ? new THREE.LineDashedMaterial({ color, dashSize:3, gapSize:2 }) : new THREE.LineBasicMaterial({ color });
   const l = new THREE.Line(g, m); if(dashed) l.computeLineDistances(); parent.add(l); return l;
 }
-// one section standing in its slot, with its velcro layer, rib or pocket, cap and spacer
-function addSection(parent, it, bay, base, zp, capTop, flip){
-  const t = TY[it.type]; const o = it.o;
+// ---- dimension lines: on the back-right of each pallet, square ends, hidden behind the pallet and rack
+const DIM_COL = '#c3cbd3', DIM_SUB = '#d9ad5c';
+let dimLabels = [];
+const DIM_H = 3.2, DIM_MIN_PX = 13, DIM_MAX_PX = 24;
+const _v = new THREE.Vector3();
+function sizeDimLabels(){
+  const vh = renderer.domElement.clientHeight || 1, k = 2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)) / vh;
+  dimLabels.forEach(sp => { if(!sp.parent) return; sp.getWorldPosition(_v); const d = _v.distanceTo(camera.position);
+    const h = Math.min(Math.max(DIM_H, DIM_MIN_PX*k*d), DIM_MAX_PX*k*d); sp.scale.set(h*sp.userData.aspect, h, 1); });
+}
+function dimLabel(text, color){
+  const c = document.createElement('canvas'); const s = 2, fs = 30, padX = 10;
+  const x0 = c.getContext('2d'); x0.font = `500 ${fs}px "IBM Plex Mono", monospace`;
+  const w = Math.ceil(x0.measureText(text).width) + padX*2, h = fs + 12;
+  c.width = w*s; c.height = h*s; const x = c.getContext('2d'); x.scale(s,s);
+  x.fillStyle = 'rgba(18,21,24,0.7)'; x.beginPath(); x.roundRect(0,0,w,h,6); x.fill();
+  x.fillStyle = color; x.font = `500 ${fs}px "IBM Plex Mono", monospace`; x.textBaseline = 'middle'; x.fillText(text, padX, h/2+1);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; disposables.push(tex);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, depthTest:true, depthWrite:false, transparent:true, opacity:0.95 }));
+  sp.userData.aspect = w / h; dimLabels.push(sp); return sp;
+}
+function segs(pts, color, parent, opacity=1){
+  const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(...p))); disposables.push(g);
+  const m = new THREE.LineBasicMaterial({ color, transparent:true, opacity }); disposables.push(m);
+  const l = new THREE.LineSegments(g, m); parent.add(l); return l;
+}
+function dim(parent, a, b, off, text, color=DIM_COL, at=0.5){
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), O = new THREE.Vector3(...off);
+  const A2 = A.clone().add(O), B2 = B.clone().add(O), on = O.clone().normalize();
+  const p = [];
+  [[A,A2],[B,B2]].forEach(([s,e]) => p.push(s.clone().add(on.clone().multiplyScalar(1.5)).toArray(), e.clone().add(on.clone().multiplyScalar(1.5)).toArray()));
+  p.push(A2.toArray(), B2.toArray());
+  const t = on.clone().multiplyScalar(1.2);
+  [A2,B2].forEach(q => p.push(q.clone().sub(t).toArray(), q.clone().add(t).toArray()));
+  segs(p, color, parent, 0.75);
+  const lbl = dimLabel(text, color); lbl.position.copy(A2.clone().lerp(B2, at)); parent.add(lbl);
+}
+function palletDimLines(g, b, D){
+  const W = b.len, deck = b.deckH, top = b.top;
+  dim(g, [0,0,0], [W,0,0], [0,0,-9], `${frac(W)}`);
+  dim(g, [W,0,0], [W,0,D], [9,0,0], view.spread > 1 ? `${frac(b.dep)} (spread)` : `${frac(b.dep)}`);
+  dim(g, [W,0,0], [W,top,0], [11,0,-11], `${frac(top)} o/a incl. pallet`, DIM_COL, 0.62);
+  dim(g, [W,0,0], [W,deck,0], [5,0,-5], `pallet ${frac(deck)}`, DIM_SUB, 0.5);
+  dim(g, [W,deck,0], [W,top,0], [5,0,-5], `${frac(top-deck)}`, DIM_SUB, 0.38);
+}
+// one item standing in its slot, with its tolerance envelope, rib or pocket, cap and spacer
+function addItem(parent, it, bay, base, zp, sw, capTop, flip){
+  const d = DEFS[it.type], o = it.o, c = bay.geom.c;
   const sec = new THREE.Group(); sec.position.set(it.x, base, zp); sec.userData.it = it; parent.add(sec); secGroups.push(sec);
-  if(t.bar){
-    const rows = Math.ceil(t.bar/3);
-    for(let b=0;b<t.bar;b++){ const m = box(0.95, t.len, 1/rows - 0.02, pieceMat(it.type,'bar'), (b%3), 0, Math.floor(b/3)*(1/rows), sec); m.userData.kind='bar'; m.userData.it = it; pickables.push(m); }
-  } else {
-    const body = new THREE.Group(); sec.add(body);
-    if(flip){ body.scale.x = -1; body.position.x = o.w; }
-    const G = sectionGeo(it.type, o);
-    G.pieces.forEach(({k, geo}) => {
-      const m = new THREE.Mesh(geo, pieceMat(it.type, k)); m.userData.kind = k; m.userData.it = it; body.add(m); pickables.push(m);
-      if(state.velc && bay.geom.c > 0){ const v = new THREE.Mesh(geo, VELC); v.scale.z = 1 + 2*bay.geom.c; v.position.z = -bay.geom.c; v.userData.sup = it; v.renderOrder = 2; body.add(v); }
-    });
-    if(state.sup){
-      const sw = bay.geom.slotw;
-      if(G.rib){ const r = new THREE.Mesh(G.rib, RIB); r.position.z = 0.125; r.userData.sup = it; body.add(r); }
-      else { const f = box(G.pocket[1]-G.pocket[0]+2, 2.5, sw, FOAM, G.pocket[0]-1, 0, -(sw-1)/2, body); f.userData.sup = it; }
-      const ch = capTop - base - (o.h - 1.5);
-      if(ch > 0.2){ const c = box(G.cap[1]-G.cap[0]+2, ch, sw, FOAM, G.cap[0]-1, o.h-1.5, -(sw-1)/2, body); c.userData.sup = it; }
-      if(it.pos > 0){ const s = box(SPACER-0.3, 30, 1, PLY, -bay.geom.gap + bay.geom.c + 0.15, 3.5, 0, sec); s.userData.sup = it; }
-    }
+  const body = new THREE.Group(); sec.add(body);
+  if(flip && d.kind !== 'box'){ body.scale.x = -1; body.position.x = o.w; }
+  const G = itemGeo(it.type, o);
+  G.pieces.forEach(({k, geo}) => {
+    const m = new THREE.Mesh(geo, pieceMat(it.type, k)); m.userData.kind = k; m.userData.it = it; body.add(m); pickables.push(m);
+    if(view.velc && c > 0){ const v = new THREE.Mesh(geo, VELC); v.scale.z = (d.t + 2*c)/d.t; v.position.z = -c; v.userData.sup = it; v.renderOrder = 2; body.add(v); }
+  });
+  if(view.sup){
+    if(G.rib){ const r = new THREE.Mesh(G.rib, RIB); r.position.z = d.t*0.125; r.userData.sup = it; body.add(r); }
+    else { const f = box(G.pocket[1]-G.pocket[0]+2, 2.5, sw, FOAM, G.pocket[0]-1, 0, -c, body); f.userData.sup = it; }
+    const ch = capTop - base - (o.h - 1.5);
+    if(ch > 0.2){ const cp = box(G.cap[1]-G.cap[0]+2, ch, sw, FOAM, G.cap[0]-1, o.h-1.5, -c, body); cp.userData.sup = it; }
+    if(it.pos > 0){ const s = box(SPACER-0.3, Math.min(30, o.h*0.6), d.t, PLY, -bay.geom.gap + c + 0.15, 3.5, 0, sec); s.userData.sup = it; }
   }
   return sec;
 }
-function addCombs(g, bay, base, yTop, zFirst, P, stations, zWallIn, zWallOut){
-  const G = bay.geom, tooth = state.tooth;
+function addCombs(g, bay, base, yTop, zAt, stations, zWallIn, zWallOut){
+  const tooth = bay.geom.tooth; if(tooth <= 0) return;
+  const zs = [zAt(-1)].concat(bay.slots.map((sl, i) => zAt(i) + sl.sw + tooth/2));
+  zs[0] = zAt(0) - tooth/2;
   [base+3, base + (yTop-base)*0.48, yTop-3.5].forEach(y => {
     stations.forEach(xc => box(1.0, 1.5, zWallOut - zWallIn, COMB, xc-0.5, y, zWallIn, g));
     const tg = new THREE.BoxGeometry(3, 1.5, tooth); disposables.push(tg);
-    const n = bay.maxslots + 1; const inst = new THREE.InstancedMesh(tg, COMB, n*stations.length); const m4 = new THREE.Matrix4(); let k = 0;
-    for(let i=0;i<n;i++){
-      const zc = i===0 ? zFirst - tooth/2 : zFirst + (i-1)*P + G.slotw + tooth/2;
-      stations.forEach(xc => { m4.makeTranslation(xc + (xc < bay.len/2 ? 2 : -2), y+0.75, zc); inst.setMatrixAt(k++, m4); });
-    }
+    const inst = new THREE.InstancedMesh(tg, COMB, zs.length*stations.length); const m4 = new THREE.Matrix4(); let k = 0;
+    zs.forEach(zc => stations.forEach(xc => { m4.makeTranslation(xc + (xc < bay.len/2 ? 2 : -2), y+0.75, zc); inst.setMatrixAt(k++, m4); }));
     g.add(inst);
   });
 }
+function slotZ(bay, wallZ){   // z of each slot's near face, with the "spread" view option applied
+  const out = []; let z = wallZ + bay.geom.tooth;
+  bay.slots.forEach((sl, i) => { out.push(z); z += (sl.sw + bay.geom.tooth) * (i < bay.slots.length-1 ? view.spread : 1); });
+  return out;
+}
 function buildPallet(b, bi, px){
   const g = new THREE.Group(); g.position.x = px; root.add(g);
-  const G = b.geom, P = G.pitch * state.spread, tooth = state.tooth, POST = PAL.POST;
-  const base = b.deckH + 0.75, railU = base + b.clearH + 0.25;
-  const z0 = POST + tooth;
-  const span = z0 + (b.maxslots-1)*P + G.slotw + tooth + POST;
-  const span1 = z0 + (b.maxslots-1)*G.pitch + G.slotw + tooth + POST;
-  const D = PAL.D + (span - span1);
-  const zShift = (D - span)/2;
-  if(state.rack){
+  const zs = slotZ(b, POST + (b.depthBudget - b.depthUsed)/2);
+  const last = b.slots.length ? zs[zs.length-1] + b.slots[b.slots.length-1].sw + b.geom.tooth : POST + b.depthBudget;
+  const D = Math.max(b.dep, last + POST);
+  const base = b.deckH + 0.75, railU = base + b.clearH + 0.25, W = b.len;
+  if(view.rack){
     const sH = b.deckH - 0.75;
-    [0, D/2-0.75, D-1.5].forEach(z => box(PAL.W, sH, 1.5, WOOD, 0, 0, z, g));
-    for(let i=0;i<7;i++) box(3.5, 0.75, D, WOOD, i*(PAL.W-3.5)/6, sH, 0, g);
-    [[0,0],[PAL.W-POST,0],[0,D-3.5],[PAL.W-POST,D-3.5]].forEach(([x,z]) => box(POST, b.top-b.deckH, 3.5, WOOD, x, b.deckH, z, g));
-    box(PAL.W-2*POST, 1.5, D-2*POST, PLY, POST, b.deckH, POST, g);
-    [POST, PAL.W/2-1, PAL.W-POST-2].forEach(x => box(2, b.railT, D-2*POST, PLY_T, x, railU, POST, g));
-    addCombs(g, b, base, railU, zShift + z0, P, [POST+0.5, PAL.W-POST-0.5], POST, D-POST);
+    [0, D/2-0.75, D-1.5].forEach(z => box(W, sH, 1.5, WOOD, 0, 0, z, g));
+    const nb = Math.max(5, Math.round(W/7)); for(let i=0;i<nb;i++) box(3.5, 0.75, D, WOOD, i*(W-3.5)/(nb-1), sH, 0, g);
+    [[0,0],[W-POST,0],[0,D-3.5],[W-POST,D-3.5]].forEach(([x,z]) => box(POST, b.top-b.deckH, 3.5, WOOD, x, b.deckH, z, g));
+    box(W-2*POST, 1.5, D-2*POST, PLY, POST, b.deckH, POST, g);
+    [POST, W/2-1, W-POST-2].forEach(x => box(2, b.railT, D-2*POST, PLY_T, x, railU, POST, g));
+    addCombs(g, b, base, railU, i => zs[Math.max(0,i)], [POST+0.5, W-POST-0.5], POST, D-POST);
   }
-  if(state.limit) lineLoop([[0,90,0],[PAL.W,90,0],[PAL.W,90,D],[0,90,D],[0,90,0]], '#ff6b5e', g, true);
+  if(view.limit) lineLoop([[0,PS().maxH,0],[W,PS().maxH,0],[W,PS().maxH,D],[0,PS().maxH,D],[0,PS().maxH,0]], '#ff6b5e', g, true);
+  if(view.dims) palletDimLines(g, b, D);
   const flipCount = {};
-  b.slots.forEach((sl, si) => {
-    const zp = zShift + z0 + si*P + (G.slotw-1)/2;
-    sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1; addSection(g, it, b, base, zp, railU, flipCount[it.type]%2===0); });
-  });
-  const lbl = textSprite([`${b.label}${b.tall?'  ·  tall rack':''}`, `48×40×${frac(b.top)}  ${ftin(b.top)}`], b.tall ? '#f2b33d' : '#e8ebee');
-  lbl.position.set(PAL.W/2, b.top + 12, D/2); g.add(lbl);
-  bayInfo.push({ x:px, len:PAL.W, depth:D, top:b.top, center:new THREE.Vector3(px + PAL.W/2, b.top/2, D/2) });
+  b.slots.forEach((sl, si) => sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1;
+    addItem(g, it, b, base, zs[si] + PROJ.settings.tol + (sl.t - DEFS[it.type].t)/2, sl.sw, railU, flipCount[it.type]%2===0); }));
+  const lbl = textSprite([`${b.label}${b.tall?'  ·  tall rack':''}`, `${ftin(b.top)} overall, incl. pallet`], b.tall ? '#f2b33d' : '#e8ebee');
+  lbl.position.set(W/2, b.top + 12, D/2); g.add(lbl);
+  bayInfo.push({ x:px, len:W, depth:D, top:b.top, center:new THREE.Vector3(px + W/2, b.top/2, D/2) });
 }
 function buildTruck(b){
-  const v = state.veh, g = new THREE.Group(); root.add(g);
-  const G = b.geom, P = G.pitch * state.spread, tooth = state.tooth;
+  const v = veh(), g = new THREE.Group(); root.add(g);
   const floor = v.deckH, base = floor + 0.75, railU = base + b.clearH + 0.25;
-  const z0 = 1.5 + tooth;
-  const span = z0 + (b.maxslots-1)*P + G.slotw + tooth + 1.5;
-  const Wd = Math.max(v.W, span);
-  if(state.rack){
-    // chassis, cab, wheels
+  const zs = slotZ(b, 1.5 + (b.zShift||0));
+  const last = b.slots.length ? zs[zs.length-1] + b.slots[b.slots.length-1].sw + b.geom.tooth + 1.5 : v.W;
+  const Wd = Math.max(v.W, last);
+  if(view.rack){
     box(v.L + 20, 8, Wd - 10, TRUCK_DARK, -20, floor - 14, 5, g);
     box(v.L, 3, Wd, TRUCK_BODY, 0, floor - 3, 0, g);
     const cabL = 72; box(cabL, floor + 52, Wd - 4, TRUCK_BODY, -cabL - 22, 14, 2, g);
     box(18, 30, Wd - 10, TRUCK_DARK, -cabL - 4, floor + 4, 5, g);
     const wg = new THREE.CylinderGeometry(16, 16, 9, 20); disposables.push(wg); wg.rotateX(Math.PI/2);
-    [[-cabL - 2, 0], [v.wellX, 0]].forEach(([wx]) => [-2, Wd + 2].forEach(wz => { const w = new THREE.Mesh(wg, TRUCK_DARK); w.position.set(wx, 16, wz); g.add(w); }));
-    // box walls (see-through), roof edges, door frame
+    [-cabL - 2, v.wellX].forEach(wx => [-2, Wd + 2].forEach(wz => { const w = new THREE.Mesh(wg, TRUCK_DARK); w.position.set(wx, 16, wz); g.add(w); }));
     box(v.L, v.H, 0.5, TRUCK_WALL, 0, floor, -0.5, g); box(v.L, v.H, 0.5, TRUCK_WALL, 0, floor, Wd, g);
     box(0.5, v.H, Wd, TRUCK_WALL, -0.5, floor, 0, g); box(v.L, 0.5, Wd, TRUCK_WALL, 0, floor + v.H, 0, g);
     const H = v.H, e = [[0,floor,0],[v.L,floor,0],[v.L,floor+H,0],[0,floor+H,0],[0,floor,0],[0,floor,Wd],[v.L,floor,Wd],[v.L,floor+H,Wd],[0,floor+H,Wd],[0,floor,Wd]];
@@ -388,179 +539,273 @@ function buildTruck(b){
       const r = new THREE.Mesh(rg, TRUCK_DARK); const ang = Math.atan2(floor, rl);
       r.position.set(v.L + Math.cos(ang)*rl/2, floor/2, Wd/2); r.rotation.z = -ang; g.add(r); }
     if(v.wells){ [0, Wd - v.wellW].forEach(z => box(v.wellL, v.wellH, v.wellW, WELL, v.wellX - v.wellL/2, floor, z, g)); }
-    // in-truck rack: base board, top rails, combs
     box(v.L - 3, 1.5, Wd - 3, PLY, 1.5, floor, 1.5, g);
     [1.5, Wd/2 - 1, Wd - 3.5].forEach(z => box(v.L - 3, 1, 2, PLY_T, 1.5, railU, z, g));
-    addCombs(g, b, base, railU, z0, P, [2, v.L*0.5, v.L - 3], 1.5, Wd - 1.5);
+    if(b.slots.length) addCombs(g, b, base, railU, i => zs[Math.max(0,i)], [2, v.L*0.5, v.L - 3], 1.5, Wd - 1.5);
   }
   const flipCount = {};
-  b.slots.forEach((sl, si) => {
-    const zp = z0 + si*P + (G.slotw-1)/2;
-    sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1; addSection(g, it, b, base, zp, railU, flipCount[it.type]%2===0); });
-  });
+  b.slots.forEach((sl, si) => sl.items.forEach(it => { flipCount[it.type] = (flipCount[it.type]||0)+1;
+    addItem(g, it, b, base, zs[si] + PROJ.settings.tol + (sl.t - DEFS[it.type].t)/2, sl.sw, railU, flipCount[it.type]%2===0); }));
   const lbl = textSprite([v.name.replace(' (enter your own numbers)',''), `floor ${ftin(v.L)} · door ${frac(v.doorW)}×${frac(v.doorH)}`]);
   lbl.position.set(v.L/2, floor + v.H + 16, Wd/2); g.add(lbl);
   bayInfo.push({ x:0, len:v.L, depth:Wd, top:floor + v.H, center:new THREE.Vector3(v.L/2, floor + v.H/2, Wd/2) });
-  // pieces that did not fit, stood up beside the truck
-  if(PLAN.left.length){
-    const lg = new THREE.Group(); lg.position.set(0, 0, -60); root.add(lg);
-    let x = 0; const fake = { geom: Object.assign({}, G, { c:0 }), clearH:200 };
-    PLAN.left.forEach(it0 => { const o = orient(it0.type, 200); const it = Object.assign({}, it0, { o, x, h:o.h, pos:0, id:'—', bay:-1, slot:-1, left:true });
-      addSection(lg, it, Object.assign({}, fake, { geom:Object.assign({}, G, { c:0 }) }), 0, 0, 0, false); x += o.w + 4; });
-    const l2 = textSprite([`${PLAN.left.length} pieces don't fit`, 'shown beside the truck'], '#ff8f84'); l2.position.set(Math.min(x,300)/2, 110, -60); root.add(l2);
-  }
+}
+function buildLeftovers(){
+  if(!PLAN.left.length) return;
+  const lg = new THREE.Group(); const zoff = SH().mode === 'T' ? -60 : -70; lg.position.set(0, 0, zoff); root.add(lg);
+  let x = 0; const fake = { geom:{ c:0, gap:0, tooth:0 }, clearH:400 };
+  PLAN.left.forEach(it0 => { const o = orient(it0.type, 400); const it = Object.assign({}, it0, { o, x, h:o.h, pos:0, id:'—', bay:-1, slot:-1, left:true });
+    addItem(lg, it, fake, 0, 0, DEFS[it.type].t, 0, false); x += o.w + 4; });
+  const l2 = textSprite([`${PLAN.left.length} item${PLAN.left.length>1?'s':''} don't fit`, SH().mode==='T' ? 'shown beside the truck' : 'too big for the pallet settings'], '#ff8f84');
+  l2.position.set(Math.min(x,300)/2, 110, zoff); root.add(l2);
 }
 function build(){
-  root.clear(); disposables.forEach(d => d.dispose()); disposables = []; pickables = []; secGroups = []; bayInfo = [];
+  root.clear(); disposables.forEach(d => d.dispose()); disposables = []; pickables = []; secGroups = []; bayInfo = []; dimLabels = [];
+  if(!PROJ || !ITEMS.length){ showEmpty(); requestRender(); return; }
+  $('empty').hidden = true;
   makePlan();
-  if(state.mode === 'P'){ let px = 0; PLAN.bays.forEach((b, bi) => { buildPallet(b, bi, px); px += PAL.W + 40; }); }
+  if(SH().mode === 'P'){ let px = 0; PLAN.bays.forEach((b, bi) => { buildPallet(b, bi, px); px += b.len + 40; }); }
   else buildTruck(PLAN.bays[0]);
-  if(state.step == null || state.step > PLAN.seq.length) state.step = PLAN.seq.length;
-  $('step').max = PLAN.seq.length; $('step').value = state.step;
+  buildLeftovers();
+  if(view.step == null || view.step > PLAN.seq.length) view.step = PLAN.seq.length;
+  $('step').max = PLAN.seq.length; $('step').value = view.step;
   applyVisibility(); renderPanels();
 }
+function showEmpty(){
+  const el = $('empty'); el.hidden = false;
+  el.innerHTML = !PROJ ? `<div><b>No projects yet.</b><br>Send a Rhino model to Claude in chat to add one,<br>or import a project file from the ⋯ menu.</div>`
+    : `<div><b>${esc(PROJ.name)}</b> has no items to ship yet.<br>Add a box item in the Items tab, or send the model to Claude.</div>`;
+  PLAN = { bays:[], seq:[], left:[], rejected:[] }; renderPanels();
+}
 
-// ---------------- visibility, filter, selection ----------------
+// =====================================================================================
+// Visibility, filter, selection
+// =====================================================================================
 function sameIt(a,b){ return a && b && a.uid === b.uid; }
 function applyVisibility(){
-  const cur = state.step < PLAN.seq.length ? PLAN.seq[state.step-1] : null;
-  secGroups.forEach(g => { const it = g.userData.it; g.visible = it.left || it.step <= state.step; });
+  if(!PLAN) return;
+  const cur = view.step < PLAN.seq.length ? PLAN.seq[view.step-1] : null;
+  secGroups.forEach(g => { const it = g.userData.it; g.visible = it.left || it.step <= view.step; });
   root.traverse(o => {
     if(!o.isMesh) return;
     const it = o.userData.it || o.userData.sup; if(!it) return;
     if(!o.userData.base) o.userData.base = o.material;
-    const dim = state.arch !== 'all' && archOf(it.type) !== state.arch;
-    const hi = o.userData.it && (sameIt(it, state.sel) || sameIt(it, cur));
+    const dim = view.group !== 'all' && DEFS[it.type]?.group !== view.group;
+    const hi = o.userData.it && (sameIt(it, view.sel) || sameIt(it, cur));
     o.material = dim ? GHOST : (hi ? HILITE : o.userData.base);
   });
   stepText(); requestRender();
 }
 function refreshMaterials(){ root.traverse(o => { if(o.isMesh && o.userData.it && o.userData.kind) o.userData.base = pieceMat(o.userData.it.type, o.userData.kind); }); applyVisibility(); renderLegend(); }
-
 function where(it){
-  if(it.left) return "Doesn't fit in this truck";
+  if(it.left) return SH().mode === 'T' ? "Doesn't fit in this truck" : "Doesn't fit the pallet settings";
   const b = PLAN.bays[it.bay];
-  if(b.kind === 'pallet') return `Pallet ${it.bay+1}, slot ${it.slot+1} of ${b.maxslots}` + (it.n>1 ? `, piece ${it.pos+1} of ${it.n}` : '');
-  return `Truck slot ${it.slot+1} of ${b.maxslots}, ${ftin(it.x)} from the front wall`;
+  if(b.kind === 'pallet') return `Pallet ${it.bay+1}, slot ${it.slot+1}` + (it.n>1 ? `, piece ${it.pos+1} of ${it.n}` : '');
+  return `Truck slot ${it.slot+1}, ${ftin(it.x)} from the front wall`;
 }
 function describe(it){
-  const t = TY[it.type];
-  return { name: it.type.startsWith('BB') ? `Bottom bars (${archOf(it.type)})` : it.type, desc:t.desc,
-    size: t.bar ? `${frac(t.len)} bars, bundled` : `${frac(it.o.h)} tall × ${frac(it.o.w)} long in slot × 1"`, lb:t.lb };
+  const d = DEFS[it.type];
+  return { name:d.name || d.id, desc:d.desc || '', group:GROUPS[d.group]?.name || d.group || '',
+    size:`${frac(it.o.h)} tall × ${frac(it.o.w)} long in slot × ${frac(d.t)}`, lb:d.lb || 0 };
 }
 function stepText(){
   const n = PLAN.seq.length, el = $('stepText');
-  if(state.step >= n){ el.innerHTML = `Showing the finished load: <b>${n}</b> pieces. Drag the slider or press Play to watch it load piece by piece.` + (state.mode==='T' ? ' Unload in reverse.' : ''); return; }
-  const it = PLAN.seq[state.step-1];
-  el.innerHTML = state.step === 0 ? 'Empty. Press ▶ to load the first piece.' :
-    `<b>Step ${state.step} of ${n}:</b> load <b class="mono">${it.id}</b> · ${describe(it).name} (${describe(it).desc}) into ${where(it).toLowerCase()}.`;
+  if(view.step >= n){ el.innerHTML = `Showing the finished load: <b>${n}</b> pieces. Drag the slider or press Play to watch it load piece by piece.` + (SH().mode==='T' ? ' Unload in reverse.' : ''); return; }
+  const it = PLAN.seq[view.step-1];
+  el.innerHTML = view.step === 0 ? 'Empty. Press ▶ to load the first piece.' :
+    `<b>Step ${view.step} of ${n}:</b> load <b class="mono">${it.id}</b> · ${esc(describe(it).name)}${describe(it).desc ? ' (' + esc(describe(it).desc) + ')' : ''} into ${where(it).toLowerCase()}.`;
 }
 
-// ---------------- panels ----------------
+// =====================================================================================
+// Panels
+// =====================================================================================
 function tiles(){
-  const G = PLAN.G, b0 = PLAN.bays[0];
-  let html = `<div><b>${frac(G.slotw)}</b><span>slot</span></div><div><b>${frac(G.pitch)}</b><span>pitch</span></div><div><b>${b0.maxslots}</b><span>slots per ${state.mode==='P'?'pallet':'truck'}</span></div>`;
-  if(state.mode === 'P'){ const nt = PLAN.bays.filter(b=>b.tall).length; html += `<div><b>${PLAN.bays.length}</b><span>pallets (${nt} tall)</span></div>`; }
-  else html += `<div><b>${b0.used}</b><span>slots used</span></div>`;
-  $('tiles').innerHTML = html; $('clearOut').textContent = frac(state.clear);
+  const G = geomBase(), b0 = PLAN.bays[0];
+  const ts = [...new Set(Object.values(DEFS).map(d => d.t))]; const tMain = ts.length === 1 ? ts[0] : 1;
+  let html = `<div><b>${frac(tMain + 2*G.c)}</b><span>slot${ts.length>1?' (1" item)':''}</span></div><div><b>${frac(tMain + 2*G.c + G.tooth)}</b><span>pitch</span></div>`;
+  html += `<div><b>${b0 ? b0.estSlots : '–'}</b><span>slots per ${SH().mode==='P'?'pallet':'truck'}</span></div>`;
+  if(SH().mode === 'P'){ const nt = PLAN.bays.filter(b=>b.tall).length; html += `<div><b>${PLAN.bays.length}</b><span>pallets${nt ? ` (${nt} tall)` : ''}</span></div>`; }
+  else html += `<div><b>${b0 ? b0.used : 0}</b><span>slots used</span></div>`;
+  $('tiles').innerHTML = html; $('clearOut').textContent = frac(S().tol);
+  $('clear').value = S().tol;
+  $('toothT').setAttribute('aria-pressed', S().tooth === 0.375); $('toothS').setAttribute('aria-pressed', S().tooth === 0.5);
 }
 function renderPallets(){
   const el = $('pals'); el.innerHTML = '';
   const all = document.createElement('button'); all.className = 'pal'; all.setAttribute('aria-pressed','false');
   const tot = PLAN.bays.reduce((a,b)=>a+b.lb,0);
-  all.innerHTML = `<span class="n">All ${PLAN.bays.length} pallets</span><span class="h">${lb(tot)} Al</span><span class="d">Frame the whole shipment</span>`;
+  all.innerHTML = `<span class="n">All ${PLAN.bays.length} pallets</span><span class="h">${lb(tot)}</span><span class="d">Frame the whole shipment</span>`;
   all.onclick = () => frameAll(); el.appendChild(all);
   PLAN.bays.forEach((b, i) => {
     const btn = document.createElement('button'); btn.className = 'pal'; btn.setAttribute('aria-pressed','false');
-    btn.innerHTML = `<span class="n">P${i+1} · ${labelFor(b)}</span><span class="h ${b.tall?'tall':''}">${ftin(b.top)}</span>` +
-      `<span class="d">${b.used}/${b.maxslots} slots · ${b.count} pieces · ${lb(b.lb)} aluminum · CG ${frac(b.deckH + 0.75 + b.cg[1])} up</span>`;
+    btn.innerHTML = `<span class="n">P${i+1} · ${esc(labelFor(b))}</span><span class="h ${b.tall?'tall':''}" title="Overall height including the pallet">${ftin(b.top)} o/a</span>` +
+      `<span class="d">${frac(b.len)} × ${frac(b.dep)} × ${frac(b.top)} overall incl. ${frac(b.deckH)} pallet · ${b.used} slots · ${b.count} pieces · ${lb(b.lb)} · CG ${frac(b.deckH + 0.75 + b.cg[1])} up</span>`;
     btn.onclick = () => focusBay(i); el.appendChild(btn);
   });
+  if(PLAN.left.length){ const w = document.createElement('div'); w.className = 'hint'; w.style.color = 'var(--bad)';
+    w.textContent = `${PLAN.left.length} item${PLAN.left.length>1?'s':''} won't fit a pallet under ${ftin(PS().tallMaxH)} (raise "Tallest pallet allowed" in Items › Pallet settings, or ship by truck).`; el.appendChild(w); }
 }
 function checkRow(ok, text, warn){ return `<li><span class="pill ${ok ? 'ok' : warn ? 'warnc' : 'no'}">${ok ? 'OK' : warn ? 'CHECK' : 'NO'}</span><span>${text}</span></li>`; }
 function renderTruck(){
-  const v = state.veh, b = PLAN.bays[0];
-  const total = ITEMS.reduce((a,i)=>a+TY[i.type].lb,0), loaded = b.lb;
-  const pct = Math.min(100, loaded / v.maxLoad * 100);
-  const palTall = packPallets(null,null).bays; const tallest = Math.max(...palTall.map(p=>p.top)), shortest = Math.min(...palTall.map(p=>p.top));
+  const v = veh(), b = PLAN.bays[0];
+  const loaded = b.lb, pct = Math.min(100, loaded / v.maxLoad * 100);
+  const pal = packPallets(null,null).bays; const tops = pal.map(p=>p.top); const tallest = Math.max(...tops), shortest = Math.min(...tops);
   let h = '';
-  h += checkRow(!PLAN.left.length, PLAN.left.length ? `<b>${PLAN.left.length} pieces don't fit</b> (${[...new Set(PLAN.left.map(i=>i.type))].join(', ')}). They're shown beside the truck. Try a bigger truck or less clearance.` : `All ${ITEMS.length} pieces fit in ${b.used} of ${b.maxslots} slots.`);
-  h += checkRow(loaded <= v.maxLoad, `Payload ${lb(loaded)} of aluminum against a ${lb(v.maxLoad)} max load. Racks and foam are extra.<div class="bar"><i style="width:${pct}%"></i></div>`);
-  h += checkRow(true, `Each section passes through the ${frac(v.doorW)} × ${frac(v.doorH)} door when carried in lengthwise; the in-truck racks are built in place.`);
-  h += checkRow(shortest + 0 <= v.doorH && 40 <= v.doorW, `Pre-built pallet racks: ${frac(shortest)}${tallest>shortest?`–${frac(tallest)}`:''} tall against a ${frac(v.doorH)} door, so they ${shortest <= v.doorH ? 'fit' : "can't go in standing"}.`, false);
-  if(v.ramp > 0) h += checkRow(false, `Loading ramp is ${frac(v.ramp)} wide: fine for carrying sections, too narrow for a pallet jack. No liftgate.`, true);
-  if(v.liftgate) h += checkRow(true, 'Liftgate: confirm its platform depth and rated load with the rental.', false);
-  if(v.wells) h += checkRow(false, `Wheel wells take floor space in the ${b.slots.filter(s=>s.segs.length>1 || s.segs[0].rear - s.segs[0].front < v.L - 10).length} slots along each wall. Well size is an estimate; measure yours.`, true);
-  const cgF = b.cg[0] / v.L * 100;
-  const zc = 1.5 + state.tooth + b.cg[2]*PLAN.G.pitch + PLAN.G.slotw/2, lat = zc - v.W/2;
-  h += checkRow(cgF >= 35 && cgF <= 60 && Math.abs(lat) <= 3, `Load center of gravity ${ftin(b.cg[0])} from the front wall (${Math.round(cgF)}% of the floor) and ${frac(Math.abs(lat))} ${lat<0?'left':'right'} of the centerline. Keep heavy load ahead of the rear axle and centered side to side.`, true);
+  h += checkRow(!PLAN.left.length, PLAN.left.length ? `<b>${PLAN.left.length} pieces don't fit</b> (${[...new Set(PLAN.left.map(i=>DEFS[i.type].name))].slice(0,6).map(esc).join(', ')}). They're shown beside the truck. Try a bigger truck or less tolerance.` : `All ${ITEMS.length} pieces fit in ${b.used} slots.`);
+  h += checkRow(loaded <= v.maxLoad, `Payload ${lb(loaded)} against a ${lb(v.maxLoad)} max load. Racks and foam are extra.<div class="bar"><i style="width:${pct}%"></i></div>`);
+  h += checkRow(true, `Each item passes through the ${frac(v.doorW)} × ${frac(v.doorH)} door carried in lengthwise; the in-truck racks are built in place.`);
+  if(pal.length) h += checkRow(shortest <= v.doorH, `Pre-built pallet racks: ${frac(shortest)}${tallest>shortest?`–${frac(tallest)}`:''} tall against a ${frac(v.doorH)} door, so they ${shortest <= v.doorH ? (tallest <= v.doorH ? 'fit' : 'only partly fit') : "can't go in standing"}.`);
+  if(v.ramp > 0) h += checkRow(false, `Loading ramp is ${frac(v.ramp)} wide: fine for carrying items, too narrow for a pallet jack. No liftgate.`, true);
+  if(v.liftgate) h += checkRow(true, 'Liftgate: confirm its platform depth and rated load with the rental.');
+  if(v.wells) h += checkRow(false, `Wheel wells take floor space in the slots along each wall. Well size is an estimate; measure yours.`, true);
+  const cgF = b.cg[0] / v.L * 100, lat = 1.5 + (b.zShift||0) + b.cg[2] - v.W/2;
+  if(b.count) h += checkRow(cgF >= 35 && cgF <= 60 && Math.abs(lat) <= 3, `Load center of gravity ${ftin(b.cg[0])} from the front wall (${Math.round(cgF)}% of the floor) and ${frac(Math.abs(lat))} ${lat<0?'left':'right'} of the centerline.`, true);
   $('truckChecks').innerHTML = h;
 }
 function renderDims(){
-  const v = state.veh, el = $('dims');
+  const v = veh(), el = $('dims');
   el.innerHTML = DIM_FIELDS.map(([k, name]) => `<label for="d_${k}">${name}</label><input id="d_${k}" type="number" min="0" step="1" value="${v[k]}">`).join('') +
     `<label for="d_wells">Wheel wells inside the box</label><input id="d_wells" type="checkbox" ${v.wells?'checked':''}>`;
-  DIM_FIELDS.forEach(([k]) => $('d_'+k).onchange = e => { state.veh[k] = Math.max(0, +e.target.value || 0); state.moves.T = {}; rebuildKeep(); });
-  $('d_wells').onchange = e => { state.veh.wells = e.target.checked; state.moves.T = {}; rebuildKeep(); };
+  DIM_FIELDS.forEach(([k]) => $('d_'+k).onchange = e => { veh()[k] = Math.max(0, +e.target.value || 0); SH().moves.T = {}; scheduleSave(); rebuildKeep(); });
+  $('d_wells').onchange = e => { veh().wells = e.target.checked; SH().moves.T = {}; scheduleSave(); rebuildKeep(); };
+  $('vehicle').value = SH().vehicle;
 }
 function renderLegend(){
-  const el = $('legend');
-  const extra = `<span><i class="sw" style="background:#c9ab7a"></i>Rack / ribs</span><span><i class="sw" style="background:#7d8892"></i>Foam</span><span><i class="sw" style="background:#e9f1f7;opacity:.5"></i>Velcro</span>`;
-  el.innerHTML = (state.color==='arch' ? Object.entries(ARCH_COL).map(([a,c]) => `<span><i class="sw" style="background:${c}"></i>Arch ${a}</span>`)
-    : Object.entries(SEC_COL).map(([k,c]) => `<span><i class="sw" style="background:${c}"></i>${SEC_NAME[k]}</span>`)).join('') + extra;
+  const extra = `<span><i class="sw" style="background:#c9ab7a"></i>Rack / ribs</span><span><i class="sw" style="background:#7d8892"></i>Foam</span><span><i class="sw" style="background:#e9f1f7;opacity:.5"></i>Tolerance</span>`;
+  const entries = view.color === 'group' ? PROJ.groups.map(g => [groupColor(g.id), g.name || g.id]) : Object.values(DEFS).slice(0,12).map(d => [itemColor(d.id), d.name || d.id]);
+  $('legend').innerHTML = entries.map(([c,n]) => `<span><i class="sw" style="background:${c}"></i>${esc(n)}</span>`).join('') + extra;
+}
+function renderGroupChips(){
+  const el = $('arches'); el.innerHTML = '';
+  [['all','All']].concat(PROJ.groups.map(g => [g.id, g.name || g.id])).forEach(([id, name]) => {
+    const b = document.createElement('button'); b.dataset.g = id; b.setAttribute('aria-pressed', view.group === id);
+    const g = GROUPS[id];
+    b.innerHTML = id === 'all' ? 'All' : `<span class="sw" style="background:${groupColor(id)}"></span>${esc(name)}${g && g.qty != null ? ` <span style="color:var(--muted)">×${g.qty}</span>` : ''}`;
+    b.onclick = () => { view.group = id; el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x.dataset.g === id)); applyVisibility(); };
+    el.appendChild(b);
+  });
+  $('prio').innerHTML = '<option value="">No preference</option>' + PROJ.groups.map(g => `<option value="${esc(g.id)}">${esc(g.name || g.id)}</option>`).join('');
+  $('prio').value = SH().prio || '';
 }
 function renderMoves(){
-  const n = Object.keys(state.moves[state.mode]).length;
+  const n = Object.keys(SH().moves[SH().mode]).length;
   $('movesCount').textContent = n ? `${n} manual move${n>1?'s':''}` : 'No manual moves';
   $('movesReset').disabled = !n;
 }
 function renderCost(){
-  const cp = +$('costPallet').value, cr = +$('costRack').value, ct = +$('costTruck').value, ctr = +$('costTruckRack').value;
-  const nP = state.mode === 'P' ? PLAN.bays.length : packPallets(null,null).bays.length;
+  const c = SH().costs || {};
+  ['costPallet','costRack','costTruck','costTruckRack'].forEach(id => { if(document.activeElement !== $(id)) $(id).value = c[id] ?? ''; });
+  const cp = +c.costPallet||0, cr = +c.costRack||0, ct = +c.costTruck||0, ctr = +c.costTruckRack||0;
+  const nP = SH().mode === 'P' ? PLAN.bays.length : packPallets(null,null).bays.length;
   const parts = [];
-  if(cp || cr) parts.push(`<b>Pallets:</b> ${nP} × ($${(cp||0).toLocaleString()} + $${(cr||0).toLocaleString()}) = <b>$${(nP*((cp||0)+(cr||0))).toLocaleString()}</b>`);
-  if(ct || ctr) parts.push(`<b>Truck:</b> $${(ct||0).toLocaleString()} + $${(ctr||0).toLocaleString()} = <b>$${((ct||0)+(ctr||0)).toLocaleString()}</b>`);
+  if(cp || cr) parts.push(`<b>Pallets:</b> ${nP} × ($${cp.toLocaleString()} + $${cr.toLocaleString()}) = <b>$${(nP*(cp+cr)).toLocaleString()}</b>`);
+  if(ct || ctr) parts.push(`<b>Truck:</b> $${ct.toLocaleString()} + $${ctr.toLocaleString()} = <b>$${(ct+ctr).toLocaleString()}</b>`);
   $('costOut').innerHTML = parts.length ? parts.join('<br>') : 'Enter your quotes to compare. Pallet count comes from the current pallet plan.';
 }
+function renderProjectBar(){
+  $('projSel').innerHTML = projList.length ? projList.map(p => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('') : '<option value="">No projects yet</option>';
+  if(PROJ) $('projSel').value = PROJ.id;
+  if(PROJ){
+    const tw = ITEMS.reduce((a,i) => a + (DEFS[i.type].lb||0), 0);
+    $('projSummary').textContent = `${PROJ.groups.length} group${PROJ.groups.length===1?'':'s'} · ${Object.keys(DEFS).length} item types · ${ITEMS.length} pieces · ${lb(tw)}` + (PROJ.notes ? ` · ${PROJ.notes}` : '');
+  } else $('projSummary').textContent = '';
+  ['pmRename','pmDup','pmExport','pmDelete'].forEach(id => $(id).disabled = !PROJ);
+}
 function renderPanels(){
-  tiles(); renderLegend(); renderMoves(); renderCost();
-  $('palletPanel').hidden = state.mode !== 'P'; $('truckPanel').hidden = state.mode !== 'T';
-  if(state.mode === 'P') renderPallets(); else renderTruck();
-  if(state.sel){ const it = PLAN.seq.find(i => i.uid === state.sel.uid); state.sel = it || null; }
-  showSel(state.sel);
+  renderProjectBar();
+  if(!PROJ) return;
+  tiles(); renderLegend(); renderMoves(); renderCost(); renderGroupChips();
+  $('modeP').setAttribute('aria-pressed', SH().mode==='P'); $('modeT').setAttribute('aria-pressed', SH().mode==='T');
+  $('palletPanel').hidden = SH().mode !== 'P'; $('truckPanel').hidden = SH().mode !== 'T';
+  if(PLAN && PLAN.bays.length){ if(SH().mode === 'P') renderPallets(); else renderTruck(); } else $('pals').innerHTML = '';
+  if(view.sel && PLAN){ const it = PLAN.seq.find(i => i.uid === view.sel.uid); view.sel = it || null; }
+  showSel(view.sel);
+  if(view.tab === 'items') renderItems();
 }
 
-// ---------------- selection + manual moves ----------------
+// =====================================================================================
+// Items tab: groups, items, box items, pallet settings. Edits are saved as overrides, so the
+// geometry Claude imported stays untouched.
+// =====================================================================================
+function thumbSVG(d){
+  const pts = d.hull; const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys); const s = Math.max(x1-x0, y1-y0) || 1;
+  const path = d.pieces.map(pc => 'M' + pc.p.map(([x,y]) => `${((x-x0)/s*40+2).toFixed(1)},${((y1-y)/s*40+2).toFixed(1)}`).join('L') + 'Z').join('');
+  return `<svg class="thumb" viewBox="0 0 44 44" aria-hidden="true"><path d="${path}" fill="${groupColor(d.group)}" fill-opacity=".85"/></svg>`;
+}
+function setEdit(id, k, v){
+  const src = PROJ.items.find(i => i.id === id) || PROJ.extraItems.find(i => i.id === id);
+  if(PROJ.extraItems.includes(src)){ src[k] = v; } else { PROJ.edits[id] = Object.assign(PROJ.edits[id] || {}, { [k]:v }); }
+  deriveModel(); scheduleSave(); rebuildKeep();
+}
+function renderItems(){
+  const gt = PROJ.groups.map((g,i) => `<tr><td><span class="sw" style="background:${groupColor(g.id)}"></span></td>
+    <td><input type="text" data-g="${esc(g.id)}" data-k="name" value="${esc(g.name || g.id)}" aria-label="Group name"></td>
+    <td><input type="number" min="0" step="1" data-g="${esc(g.id)}" data-k="qty" value="${g.qty ?? 1}" aria-label="Quantity of ${esc(g.name||g.id)}"></td></tr>`).join('');
+  $('groupsTable').innerHTML = PROJ.groups.length ? `<div class="tablewrap"><table><thead><tr><th></th><th>Group</th><th>Qty</th></tr></thead><tbody>${gt}</tbody></table></div>` : '<p class="hint">No groups in this project.</p>';
+  $('groupsTable').querySelectorAll('input').forEach(inp => inp.onchange = e => {
+    const g = PROJ.groups.find(x => x.id === inp.dataset.g); g[inp.dataset.k] = inp.dataset.k === 'qty' ? Math.max(0, Math.round(+e.target.value||0)) : e.target.value;
+    deriveModel(); scheduleSave(); rebuildKeep(); });
+  const rows = Object.values(DEFS).map(d => {
+    const qtyField = d.qty != null
+      ? `<label>Total qty<input type="number" min="0" step="1" data-i="${esc(d.id)}" data-k="qty" value="${d.qty}"></label>`
+      : `<label>Per ${esc(GROUPS[d.group]?.name || 'group')} (×${GROUPS[d.group]?.qty ?? 1})<input type="number" min="0" step="1" data-i="${esc(d.id)}" data-k="perGroup" value="${d.perGroup}"></label>`;
+    return `<div class="it">${thumbSVG(d)}
+      <div><div class="nm"><input type="text" data-i="${esc(d.id)}" data-k="name" value="${esc(d.name || d.id)}" aria-label="Item name"></div>
+      <div class="meta">${esc(d.desc||'')}${d.desc ? ' · ' : ''}<b class="mono" style="color:var(--ink)">${d.total}</b> pcs · ${lb((d.lb||0)*d.total)}</div></div>
+      <div class="flds">${qtyField}
+        <label>Thickness (in)<input type="number" min="0.0625" step="0.0625" data-i="${esc(d.id)}" data-k="t" value="${d.t}"></label>
+        <label>lb each<input type="number" min="0" step="0.1" data-i="${esc(d.id)}" data-k="lb" value="${(+d.lb||0).toFixed(1)}"></label></div></div>`;
+  }).join('');
+  $('itemsTable').innerHTML = `<div class="items">${rows}</div>`;
+  $('itemsTable').querySelectorAll('input').forEach(inp => inp.onchange = e => {
+    const k = inp.dataset.k; let v = e.target.value; if(k !== 'name') v = Math.max(0, +v || 0); if(k === 'qty' || k === 'perGroup') v = Math.round(v);
+    setEdit(inp.dataset.i, k, v); });
+  const ps = PS();
+  const fields = [['L','Pallet length (in)'],['W','Pallet width (in)'],['deckStd','Standard pallet height'],['deckLow','Low-profile skid height (tall racks)'],['maxH','Target overall height'],['tallMaxH','Tallest pallet allowed']];
+  $('palletSettings').innerHTML = fields.map(([k,n]) => `<label for="ps_${k}">${n}</label><input id="ps_${k}" type="number" min="0" step="0.25" value="${ps[k]}">`).join('');
+  fields.forEach(([k]) => $('ps_'+k).onchange = e => { PS()[k] = Math.max(0, +e.target.value || 0); SH().moves.P = {}; scheduleSave(); rebuildKeep(); });
+}
+$('bxAdd').onclick = () => {
+  const name = $('bxName').value.trim() || 'Box item';
+  const it = { id:'box-' + Math.random().toString(36).slice(2,7), name, desc:'box item', kind:'box', box:{ l:+$('bxL').value||1, h:+$('bxH').value||1 }, t:+$('bxT').value||1, qty:Math.max(1, Math.round(+$('bxQ').value||1)), lb:+$('bxW').value||0, group:'' };
+  PROJ.extraItems.push(it); deriveModel(); scheduleSave(); rebuildKeep(); $('bxName').value = '';
+};
+
+// =====================================================================================
+// Selection + manual moves
+// =====================================================================================
 function showSel(it){
   const dl = $('selDl'), mb = $('moveBox');
-  if(!it){ $('selTitle').textContent = 'Click any piece'; $('selHint').hidden = false; dl.hidden = true; mb.hidden = true; return; }
+  if(!it || !PLAN){ $('selTitle').textContent = 'Click any piece'; $('selHint').hidden = false; dl.hidden = true; mb.hidden = true; return; }
   const d = describe(it);
-  $('selTitle').textContent = `${it.id} · ${d.name} · ${d.desc}`; $('selHint').hidden = true; dl.hidden = false; mb.hidden = false;
-  dl.innerHTML = `<dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb} lb aluminum</dd><dt>Clearance</dt><dd>${frac(PLAN.G.c)} each face, ${frac(PLAN.G.slotw)} slot</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
+  $('selTitle').textContent = `${it.id} · ${d.name}${d.desc ? ' · ' + d.desc : ''}`; $('selHint').hidden = true; dl.hidden = false; mb.hidden = false;
+  dl.innerHTML = `<dt>Group</dt><dd>${esc(d.group)}</dd><dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb.toFixed(1)} lb</dd><dt>Tolerance</dt><dd>${frac(S().tol)} each face</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
   $('moveBay').innerHTML = PLAN.bays.map((b,i) => `<option value="${i}">${b.label}</option>`).join('');
-  $('moveBay').value = Math.max(0, it.bay); $('moveSlot').max = PLAN.bays[Math.max(0,it.bay)].maxslots; $('moveSlot').value = it.slot + 1;
+  $('moveBay').value = Math.max(0, it.bay); $('moveSlot').value = it.slot + 1;
   $('moveMsg').textContent = '';
 }
 $('moveGo').onclick = () => {
-  const it = state.sel; if(!it) return;
+  const it = view.sel; if(!it) return;
   const bay = +$('moveBay').value, slot = (+$('moveSlot').value) - 1, b = PLAN.bays[bay];
-  if(!(slot >= 0 && slot < b.maxslots)){ $('moveMsg').innerHTML = `<span style="color:var(--bad)">Pick a slot from 1 to ${b.maxslots}.</span>`; return; }
-  const prev = state.moves[state.mode][it.uid];
-  state.moves[state.mode][it.uid] = { bay, slot };
-  const uid = it.uid; build();
+  if(!(slot >= 0)){ $('moveMsg').innerHTML = `<span style="color:var(--bad)">Pick a slot number from 1 up.</span>`; return; }
+  const moves = SH().moves[SH().mode], prev = moves[it.uid], uid = it.uid;
+  moves[uid] = { bay, slot }; build();
   const now = PLAN.seq.find(i => i.uid === uid);
-  if(!state.moves[state.mode][uid] || !now || now.bay !== bay || now.slot !== slot){
-    if(prev) state.moves[state.mode][uid] = prev; else delete state.moves[state.mode][uid];
-    build(); state.sel = PLAN.seq.find(i => i.uid === uid) || null; showSel(state.sel); applyVisibility();
-    $('moveMsg').innerHTML = `<span style="color:var(--bad)">It doesn't fit in ${b.label} slot ${slot+1}: there isn't ${frac(itemW(it.type, b) + PLAN.G.gap)} of free length there.</span>`;
+  if(!moves[uid] || !now || now.bay !== bay || now.slot !== slot){
+    if(prev) moves[uid] = prev; else delete moves[uid];
+    build(); view.sel = PLAN.seq.find(i => i.uid === uid) || null; showSel(view.sel); applyVisibility();
+    $('moveMsg').innerHTML = `<span style="color:var(--bad)">It doesn't fit in ${b.label} slot ${slot+1}: not enough free length there, a different thickness, or no room for another slot.</span>`;
     return;
   }
-  state.sel = now; showSel(now); applyVisibility();
+  scheduleSave(); view.sel = now; showSel(now); applyVisibility();
   $('moveMsg').innerHTML = `<span style="color:var(--good)">Moved to ${b.label} slot ${slot+1}. Other pieces re-packed around it.</span>`;
 };
-$('movesReset').onclick = () => { state.moves[state.mode] = {}; rebuildKeep(); };
+$('movesReset').onclick = () => { SH().moves[SH().mode] = {}; scheduleSave(); rebuildKeep(); };
 
-// ---------------- modals: packing list, weight & balance ----------------
+// =====================================================================================
+// Modals: packing list, weight & balance
+// =====================================================================================
 let modalTSV = '';
 function openModal(title, sub, head, rows){
   $('modalTitle').textContent = title; $('modalSub').textContent = sub;
@@ -569,64 +814,126 @@ function openModal(title, sub, head, rows){
   $('modal').style.display = 'flex'; $('modalClose').focus();
 }
 $('openList').onclick = () => {
-  const rows = PLAN.seq.map(it => { const d = describe(it); return [it.step, `<span class="mono">${it.id}</span>`, where(it), d.name, archOf(it.type), d.desc, d.size, d.lb.toFixed(1)]; })
-    .concat(PLAN.left.map(it => ['—','—',"Doesn't fit", it.type, archOf(it.type), TY[it.type].desc, '', TY[it.type].lb.toFixed(1)]));
-  openModal('Packing list', `${PLAN.seq.length} pieces in loading order${state.mode==='T'?' (unload in reverse)':''}. IDs read container, slot, position: P2-07b is pallet 2, slot 7, second piece.`,
-    ['Step','ID','Location','Section','Arch','Piece','Size','lb'], rows);
+  if(!PLAN) return;
+  const rows = PLAN.seq.map(it => { const d = describe(it); return [it.step, `<span class="mono">${it.id}</span>`, where(it), esc(d.name), esc(d.group), esc(d.desc), d.size, d.lb.toFixed(1)]; })
+    .concat(PLAN.left.map(it => ['—','—',"Doesn't fit", esc(DEFS[it.type].name), esc(GROUPS[DEFS[it.type].group]?.name||''), esc(DEFS[it.type].desc||''), '', (+DEFS[it.type].lb||0).toFixed(1)]));
+  openModal(`Packing list · ${PROJ.name}`, `${PLAN.seq.length} pieces in loading order${SH().mode==='T'?' (unload in reverse)':''}. IDs read container, slot, position: P2-07b is pallet 2, slot 7, second piece.`,
+    ['Step','ID','Location','Item','Group','Description','Size','lb'], rows);
 };
 $('openWeights').onclick = () => {
+  if(!PLAN) return;
   const rows = PLAN.bays.map(b => {
-    if(b.kind === 'pallet') return [b.label, labelFor(b), b.count, lb(b.lb), b.tall ? '~120 lb' : '~110 lb', lb(b.lb + (b.tall?120:110)),
-      frac(b.deckH + 0.75 + b.cg[1]), `${frac(Math.abs(b.cg[0] - PAL.W/2))} ${b.cg[0] < PAL.W/2 ? 'left' : 'right'} of center`];
-    const v = state.veh; return ['Truck', v.name, b.count, lb(b.lb), 'not counted', lb(b.lb), frac(v.deckH + 0.75 + b.cg[1]) + ' above ground', `${ftin(b.cg[0])} from front wall, ${frac(Math.abs(1.5 + state.tooth + b.cg[2]*PLAN.G.pitch + PLAN.G.slotw/2 - v.W/2))} off centerline`];
+    if(b.kind === 'pallet') return [b.label, esc(labelFor(b)), b.count, lb(b.lb), b.tall ? '~120 lb' : '~110 lb', lb(b.lb + (b.tall?120:110)),
+      frac(b.deckH + 0.75 + b.cg[1]), `${frac(Math.abs(b.cg[0] - b.len/2))} ${b.cg[0] < b.len/2 ? 'left' : 'right'} of center`];
+    const v = veh(); return ['Truck', esc(v.name), b.count, lb(b.lb), 'not counted', lb(b.lb), frac(v.deckH + 0.75 + b.cg[1]) + ' above ground', `${ftin(b.cg[0])} from front wall`];
   });
-  openModal('Weight & balance', 'Aluminum weights are from the Rhino geometry (0.125" wall tube, ¼" flat). Rack and pallet weights are estimates. CG = center of gravity of the aluminum.',
-    ['Unit','Contents','Pieces','Aluminum','Rack + pallet','Total','CG height','CG offset'], rows);
+  openModal('Weight & balance', 'Item weights come from the project. Rack and pallet weights are estimates. CG = center of gravity of the items.',
+    ['Unit','Contents','Pieces','Items','Rack + pallet','Total','CG height','CG offset'], rows);
 };
 $('modalClose').onclick = () => $('modal').style.display = 'none';
 $('modal').onclick = e => { if(e.target.id === 'modal') $('modal').style.display = 'none'; };
-document.addEventListener('keydown', e => { if(e.key === 'Escape') $('modal').style.display = 'none'; });
+document.addEventListener('keydown', e => { if(e.key === 'Escape'){ $('modal').style.display = 'none'; $('projMenu').hidden = true; } });
 $('modalCopy').onclick = async () => { try { await navigator.clipboard.writeText(modalTSV); $('modalCopy').textContent = 'Copied'; } catch { $('modalCopy').textContent = 'Copy blocked'; } setTimeout(()=>$('modalCopy').textContent='Copy for spreadsheet', 1600); };
 
-// ---------------- controls ----------------
-function rebuildKeep(){ const n = bayInfo.length; state.step = null; build(); if(bayInfo.length !== n) frameAll(); }
-function setMode(m){ state.mode = m; state.sel = null; state.step = null; $('modeP').setAttribute('aria-pressed', m==='P'); $('modeT').setAttribute('aria-pressed', m==='T'); build(); frameAll(true); }
-$('modeP').onclick = () => setMode('P'); $('modeT').onclick = () => setMode('T');
-function setTooth(v){ state.tooth = v; $('toothT').setAttribute('aria-pressed', v===0.375); $('toothS').setAttribute('aria-pressed', v===0.5); state.moves = { P:{}, T:{} }; rebuildKeep(); }
-$('toothT').onclick = () => setTooth(0.375); $('toothS').onclick = () => setTooth(0.5);
-$('clear').oninput = e => { state.clear = +e.target.value; state.moves = { P:{}, T:{} }; rebuildKeep(); };
-$('vehicle').innerHTML = Object.entries(VEHICLES).map(([k,v]) => `<option value="${k}">${v.name}</option>`).join('');
-$('vehicle').value = state.vehicle;
-$('vehicle').onchange = e => { state.vehicle = e.target.value; state.veh = vehDefaults(state.vehicle); state.moves.T = {}; renderDims(); state.step = null; build(); frameAll(); };
-$('prio').onchange = e => { state.prio = e.target.value; rebuildKeep(); };
-$('spread').oninput = e => { state.spread = +e.target.value; build(); };
-$('rack').onchange = e => { state.rack = e.target.checked; build(); };
-$('sup').onchange = e => { state.sup = e.target.checked; build(); };
-$('velc').onchange = e => { state.velc = e.target.checked; build(); };
-$('limit').onchange = e => { state.limit = e.target.checked; build(); };
-$('colorby').onchange = e => { state.color = e.target.value; refreshMaterials(); };
-['costPallet','costRack','costTruck','costTruckRack'].forEach(id => $(id).oninput = renderCost);
-const archEl = $('arches');
-['all','A','B','C','D','E'].forEach(a => {
-  const b = document.createElement('button'); b.dataset.a = a; b.setAttribute('aria-pressed', a==='all');
-  b.innerHTML = a==='all' ? 'All' : `<span class="sw" style="background:${ARCH_COL[a]}"></span>${a} <span style="color:var(--muted)">×${QTY[a]}</span>`;
-  b.onclick = () => { state.arch = a; archEl.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x.dataset.a===a)); applyVisibility(); };
-  archEl.appendChild(b);
-});
-// load sequence
-let playTimer = null;
-function setStep(s){ state.step = Math.max(0, Math.min(PLAN.seq.length, s)); $('step').value = state.step; applyVisibility(); }
-$('step').oninput = e => setStep(+e.target.value);
-$('stepPrev').onclick = () => setStep(state.step - 1);
-$('stepNext').onclick = () => setStep(state.step + 1);
-$('stepPlay').onclick = () => {
-  if(playTimer){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; }
-  if(state.step >= PLAN.seq.length) setStep(0);
-  $('stepPlay').textContent = 'Pause';
-  playTimer = setInterval(() => { if(state.step >= PLAN.seq.length){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; } setStep(state.step + 1); }, reduce ? 600 : 260);
+// =====================================================================================
+// Project menu: open, rename, duplicate, export, import, delete
+// =====================================================================================
+function projectFile(p){ const o = { format:'palletizer-project', version:1 }; META_KEYS.forEach(k => o[k] = p[k]); o.items = p.items; return o; }
+async function refreshList(){ try { projList = await store.list(); } catch(e){ projList = []; setNote("Couldn't load projects", true); } }
+async function openProject(id){
+  if(!id){ PROJ = null; deriveEmpty(); build(); renderProjectBar(); return; }
+  setNote('Loading…');
+  let p = null; try { p = await store.load(id); } catch(e){ setNote("Couldn't open that project", true); }
+  PROJ = p; if(!p){ deriveEmpty(); build(); renderProjectBar(); return; }
+  try { localStorage.setItem('palletizer.last', id); } catch {}
+  try { if(location.hash !== '#' + id) history.replaceState(null, '', '#' + id); } catch {}
+  view.sel = null; view.step = null; view.group = 'all';
+  if(projList.find(x => x.id === id)?._file){ await refreshList(); }
+  deriveModel(); renderDims(); build(); frameAll(true);
+}
+function deriveEmpty(){ DEFS = {}; ITEMS = []; GROUPS = {}; }
+$('projSel').onchange = e => openProject(e.target.value);
+$('projMenuBtn').onclick = () => { const m = $('projMenu'); m.hidden = !m.hidden; $('projMenuBtn').setAttribute('aria-expanded', !m.hidden); };
+document.addEventListener('click', e => { if(!e.target.closest('#projMenu') && e.target.id !== 'projMenuBtn') $('projMenu').hidden = true; });
+function inlinePrompt(label, value, onOk){
+  const m = $('projMenu'); m.hidden = false;
+  m.innerHTML = `<label class="hint" for="ipt">${label}</label><input id="ipt" type="text" value="${esc(value)}" style="margin:4px 0"><div class="row" style="justify-content:flex-end;gap:6px"><button class="btn" id="iptNo">Cancel</button><button class="btn primary" id="iptOk">OK</button></div>`;
+  $('ipt').focus(); $('ipt').select();
+  const done = ok => { const v = $('ipt').value.trim(); restoreMenu(); m.hidden = true; if(ok && v) onOk(v); };
+  $('iptOk').onclick = () => done(true); $('iptNo').onclick = () => done(false);
+  $('ipt').onkeydown = e => { if(e.key === 'Enter') done(true); };
+}
+const MENU_HTML = $('projMenu').innerHTML;
+function restoreMenu(){ $('projMenu').innerHTML = MENU_HTML; wireMenu(); }
+function wireMenu(){
+  $('pmRename').onclick = e => { e.stopPropagation(); inlinePrompt('New name', PROJ.name, v => { PROJ.name = v; scheduleSave(); const li = projList.find(p => p.id === PROJ.id); if(li) li.name = v; renderProjectBar(); }); };
+  $('pmDup').onclick = e => { e.stopPropagation(); inlinePrompt('Name for the copy', PROJ.name + ' (copy)', async v => {
+    const c = clone(PROJ); c.id = newId(v); c.name = v; c.created = c.updated = new Date().toISOString();
+    try { await store.create(c); await refreshList(); await openProject(c.id); setNote('Duplicated'); } catch(err){ setNote("Couldn't duplicate: " + (err.message||err.code), true); } }); };
+  $('pmExport').onclick = async () => {
+    $('projMenu').hidden = true;
+    const data = JSON.stringify(projectFile(PROJ), null, 1), filename = (PROJ.name || 'project').replace(/[^\w.-]+/g,'_') + '.palletizer.json';
+    try { const dl = window.claude && await window.claude.use('downloads'); if(dl){ await dl.save({ filename, data }); return; } } catch {}
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type:'application/json' })); a.download = filename; a.click();
+  };
+  $('pmImport').onclick = () => { $('projMenu').hidden = true; $('importFile').click(); };
+  $('pmDelete').onclick = e => { e.stopPropagation(); const m = $('projMenu');
+    m.innerHTML = `<p class="hint" style="margin:4px">Delete <b>${esc(PROJ.name)}</b>? This can't be undone. Export it first if you might want it back.</p><div class="row" style="justify-content:flex-end;gap:6px"><button class="btn" id="delNo">Cancel</button><button class="btn" id="delYes" style="color:var(--bad);border-color:#5a2f2c">Delete</button></div>`;
+    $('delNo').onclick = () => { restoreMenu(); m.hidden = true; };
+    $('delYes').onclick = async () => { restoreMenu(); m.hidden = true; try { await store.remove(PROJ); } catch(err){ setNote("Couldn't delete: " + (err.message||err.code), true); return; }
+      await refreshList(); await openProject(projList[0]?.id); setNote('Deleted'); };
+  };
+}
+wireMenu();
+$('importFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if(!f) return;
+  try {
+    const p = JSON.parse(await f.text()); if(p.format !== 'palletizer-project') throw new Error('not a Palletizer project file');
+    if(projList.some(x => x.id === p.id)) p.id = newId(p.name);
+    p.updated = new Date().toISOString(); normalize(p);
+    await store.create(p); await refreshList(); await openProject(p.id); setNote('Imported');
+  } catch(err){ setNote("Couldn't import: " + (err.message || 'unreadable file'), true); }
 };
 
-// ---------------- picking ----------------
+// =====================================================================================
+// Controls
+// =====================================================================================
+function rebuildKeep(){ const n = bayInfo.length; view.step = null; build(); if(bayInfo.length !== n) frameAll(); }
+function setTab(t){ view.tab = t; $('tabPack').setAttribute('aria-pressed', t==='pack'); $('tabItems').setAttribute('aria-pressed', t==='items'); $('packView').hidden = t !== 'pack'; $('itemsView').hidden = t !== 'items'; if(t === 'items' && PROJ) renderItems(); }
+$('tabPack').onclick = () => setTab('pack'); $('tabItems').onclick = () => setTab('items');
+function setMode(m){ if(!PROJ) return; SH().mode = m; view.sel = null; view.step = null; scheduleSave(); build(); frameAll(true); }
+$('modeP').onclick = () => setMode('P'); $('modeT').onclick = () => setMode('T');
+function setTooth(v){ if(!PROJ) return; S().tooth = v; SH().moves = { P:{}, T:{} }; scheduleSave(); rebuildKeep(); }
+$('toothT').onclick = () => setTooth(0.375); $('toothS').onclick = () => setTooth(0.5);
+$('clear').oninput = e => { if(!PROJ) return; S().tol = +e.target.value; SH().moves = { P:{}, T:{} }; scheduleSave(); rebuildKeep(); };
+$('vehicle').innerHTML = Object.entries(VEHICLES).map(([k,v]) => `<option value="${k}">${v.name}</option>`).join('');
+$('vehicle').onchange = e => { SH().vehicle = e.target.value; SH().veh = vehDefaults(e.target.value); SH().moves.T = {}; scheduleSave(); renderDims(); view.step = null; build(); frameAll(); };
+$('prio').onchange = e => { SH().prio = e.target.value; scheduleSave(); rebuildKeep(); };
+$('spread').oninput = e => { view.spread = +e.target.value; build(); };
+$('rack').onchange = e => { view.rack = e.target.checked; build(); };
+$('sup').onchange = e => { view.sup = e.target.checked; build(); };
+$('velc').onchange = e => { view.velc = e.target.checked; build(); };
+$('limit').onchange = e => { view.limit = e.target.checked; build(); };
+function setDims(v){ view.dims = v; $('dims').checked = v; $('dimsToggle').setAttribute('aria-pressed', v); build(); }
+$('dims').onchange = e => setDims(e.target.checked);
+$('dimsToggle').onclick = () => setDims(!view.dims);
+$('colorby').onchange = e => { view.color = e.target.value; refreshMaterials(); };
+['costPallet','costRack','costTruck','costTruckRack'].forEach(id => $(id).oninput = e => { if(!PROJ) return; SH().costs = Object.assign({}, SH().costs, { [id]: e.target.value }); scheduleSave(); renderCost(); });
+let playTimer = null;
+function setStep(s){ if(!PLAN) return; view.step = Math.max(0, Math.min(PLAN.seq.length, s)); $('step').value = view.step; applyVisibility(); }
+$('step').oninput = e => setStep(+e.target.value);
+$('stepPrev').onclick = () => setStep(view.step - 1);
+$('stepNext').onclick = () => setStep(view.step + 1);
+$('stepPlay').onclick = () => {
+  if(playTimer){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; }
+  if(view.step >= PLAN.seq.length) setStep(0);
+  $('stepPlay').textContent = 'Pause';
+  playTimer = setInterval(() => { if(view.step >= PLAN.seq.length){ clearInterval(playTimer); playTimer = null; $('stepPlay').textContent = 'Play'; return; } setStep(view.step + 1); }, reduce ? 600 : 260);
+};
+
+// =====================================================================================
+// Picking
+// =====================================================================================
 const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let downAt = null;
 function visibleUp(o){ while(o){ if(!o.visible) return false; o = o.parent; } return true; }
 function pick(ev){
@@ -639,7 +946,7 @@ function pick(ev){
 renderer.domElement.addEventListener('pointermove', ev => {
   const it = pick(ev), r = stage.getBoundingClientRect();
   if(it){ const d = describe(it);
-    tip.innerHTML = `<b>${it.id} · ${d.name}</b> ${d.desc}<br>${d.size}<br><span style="color:var(--muted)">${where(it)}</span>`;
+    tip.innerHTML = `<b>${it.id} · ${esc(d.name)}</b> ${esc(d.desc)}<br>${d.size}<br><span style="color:var(--muted)">${where(it)}</span>`;
     tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 270) + 'px'; tip.style.top = (ev.clientY - r.top + 14) + 'px';
     renderer.domElement.style.cursor = 'pointer';
   } else { tip.style.display = 'none'; renderer.domElement.style.cursor = ''; }
@@ -648,10 +955,12 @@ renderer.domElement.addEventListener('pointerleave', () => tip.style.display = '
 renderer.domElement.addEventListener('pointerdown', ev => downAt = [ev.clientX, ev.clientY]);
 renderer.domElement.addEventListener('pointerup', ev => {
   if(!downAt || Math.hypot(ev.clientX-downAt[0], ev.clientY-downAt[1]) > 5) return;
-  const it = pick(ev); state.sel = it && !it.left ? it : null; showSel(state.sel); applyVisibility();
+  const it = pick(ev); view.sel = it && !it.left ? it : null; showSel(view.sel); applyVisibility();
 });
 
-// ---------------- camera + render on demand ----------------
+// =====================================================================================
+// Camera + render on demand
+// =====================================================================================
 let anim = null, queued = false;
 function requestRender(){ if(!queued){ queued = true; requestAnimationFrame(frame); } }
 function frame(now){
@@ -662,6 +971,7 @@ function frame(now){
     if(k >= 1) anim = null; else requestRender();
     controls.update();
   }
+  sizeDimLabels();
   renderer.render(scene, camera);
 }
 controls.addEventListener('change', requestRender);
@@ -670,10 +980,10 @@ function flyTo(target, pos, instant){
   anim = { t0: performance.now(), dur: 700, ft: controls.target.clone(), fp: camera.position.clone(), tt: target, tp: pos }; requestRender();
 }
 function frameAll(instant){
-  if(!bayInfo.length) return;
-  const x0 = Math.min(...bayInfo.map(b=>b.x)) - (state.mode==='T' ? 100 : 0), x1 = Math.max(...bayInfo.map(b=>b.x + b.len));
+  if(!bayInfo.length){ flyTo(new THREE.Vector3(0,40,20), new THREE.Vector3(0,200,380), true); return; }
+  const x0 = Math.min(...bayInfo.map(b=>b.x)) - (SH().mode==='T' ? 100 : 0), x1 = Math.max(...bayInfo.map(b=>b.x + b.len));
   const width = x1 - x0, c = new THREE.Vector3((x0+x1)/2, 45, bayInfo[0].depth/2);
-  if(state.mode === 'T'){ const d = Math.max(width*1.25, 340); flyTo(c, new THREE.Vector3(c.x + d*0.55, 60 + d*0.42, c.z + d*0.95), instant); }
+  if(SH().mode === 'T'){ const d = Math.max(width*1.25, 340); flyTo(c, new THREE.Vector3(c.x + d*0.55, 60 + d*0.42, c.z + d*0.95), instant); }
   else { const dist = Math.max(width*1.15, 300); flyTo(c, new THREE.Vector3(c.x - dist*0.05, 50 + dist*0.5, c.z + dist*1.0), instant); }
   $('pals').querySelectorAll('.pal').forEach((b,i) => b.setAttribute('aria-pressed', i===0));
 }
@@ -685,8 +995,22 @@ function focusBay(i){
 function resize(){ const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w/Math.max(h,1); camera.updateProjectionMatrix(); requestRender(); }
 new ResizeObserver(resize).observe(stage);
 
-renderDims(); resize(); build(); frameAll(true);
-document.fonts && document.fonts.ready.then(() => { build(); });
+// =====================================================================================
+// Start
+// =====================================================================================
+resize();
+$('empty').hidden = false; $('empty').innerHTML = '<div>Loading projects…</div>';
+(async () => {
+  store = await getStore();
+  $('storeNote').textContent = store.kind === 'db' ? '' : 'saved in this browser';
+  await refreshList();
+  let want = location.hash.slice(1);
+  if(!projList.some(p => p.id === want)){ try { want = localStorage.getItem('palletizer.last'); } catch { want = null; } }
+  if(!projList.some(p => p.id === want)) want = projList[0]?.id;
+  await openProject(want);
+  window.addEventListener('hashchange', () => { const id = location.hash.slice(1); if(id && id !== PROJ?.id && projList.some(p => p.id === id)) openProject(id); });
+})();
+document.fonts && document.fonts.ready.then(() => { if(PROJ) build(); });
 </script>
 </body>
 </html>
