@@ -39,7 +39,7 @@ const DbStore = db => ({
   async list(){
     const s = await db.collection('projects').get(); const rows = s.docs.map(d => d.data()).filter(Boolean);
     const have = new Set(rows.map(r => r.id));
-    Object.values(this.bundled).forEach(p => { if(!have.has(p.id)) rows.push({ id:p.id, name:p.name + ' · new', updated:p.updated, _file:true }); });
+    Object.values(this.bundled).forEach(p => { if(!have.has(p.id)) rows.push({ id:p.id, name:p.name + (this.readOnly ? '' : ' · new'), updated:p.updated, _file:true }); });
     return rows.sort((a,b) => (b.updated||'').localeCompare(a.updated||''));
   },
   async load(id){
@@ -71,21 +71,43 @@ const LocalStore = () => ({
   async create(p){ return this.saveMeta(p); },
   async remove(p){ const loc = lsRead(); if(this.bundled[p.id]) loc[p.id] = { id:p.id, _deleted:true }; else delete loc[p.id]; lsWrite(loc); }
 });
+// Viewers who can't edit (anyone the owner shares the page with) see the live projects
+// read-only; changes they make last for the visit and aren't saved.
+const ViewStore = db => Object.assign(DbStore(db), {
+  kind:'view', readOnly:true,
+  async load(id){
+    const m = await db.doc('projects/' + id).get();
+    if(!m.exists){ const f = this.bundled[id]; return f ? normalize(clone(f)) : null; }
+    const meta = clone(m.data()); const items = [];
+    for(let i=0;i<(meta.geomChunks||0);i++){ const g = await db.doc(`projects/${id}/geom/g${i}`).get(); if(g.exists) items.push(...(g.data().items||[])); }
+    meta.items = items; return normalize(meta);
+  },
+  async saveMeta(){}, async create(){ throw new Error('view only'); }, async remove(){ throw new Error('view only'); }
+});
 let store = null, PROJ = null, projList = [];
 async function getStore(){
   if(window.claude && typeof window.claude.use === 'function'){
-    try { const db = await Promise.race([window.claude.use('db'), new Promise(r => setTimeout(() => r(null), 10000))]); if(db){ const s = DbStore(db); await s.init(); return s; } } catch {}
+    try {
+      const timeout = new Promise(r => setTimeout(() => r(null), 10000));
+      const db = await Promise.race([window.claude.use('db'), timeout]);
+      if(db){
+        const user = await Promise.race([window.claude.use('user'), new Promise(r => setTimeout(() => r(null), 5000))]);
+        const canEdit = user ? await user.canEdit() : false;
+        const s = canEdit ? DbStore(db) : ViewStore(db); await s.init(); return s;
+      }
+    } catch {}
   }
   const s = LocalStore(); await s.init(); return s;
 }
 let saveTimer = null, saving = Promise.resolve();
 function scheduleSave(){
   if(!PROJ || !store) return;
+  if(store.readOnly){ setNote('View only · changes aren’t saved'); return; }
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { PROJ.updated = new Date().toISOString(); const snap = clone(PROJ);
     saving = saving.then(() => store.saveMeta(snap)).then(() => setNote('Saved'), e => setNote("Couldn't save: " + (e.message || e.code || 'error'), true)); }, 700);
 }
-function setNote(t, bad){ const el = $('storeNote'); el.textContent = t; el.style.color = bad ? 'var(--bad)' : ''; if(!bad) setTimeout(() => { if(el.textContent === t) el.textContent = store?.kind === 'db' ? '' : 'saved in this browser'; }, 1500); }
+function setNote(t, bad){ const el = $('storeNote'); el.textContent = t; el.style.color = bad ? 'var(--bad)' : ''; if(!bad) setTimeout(() => { if(el.textContent === t) el.textContent = store?.kind === 'db' ? '' : store?.readOnly ? 'view only' : 'saved in this browser'; }, 1800); }
 function newId(name){ return (name||'project').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40) + '-' + Math.random().toString(36).slice(2,7); }
 
 // =====================================================================================
@@ -709,7 +731,8 @@ function renderProjectBar(){
     const tw = ITEMS.reduce((a,i) => a + (DEFS[i.type].lb||0), 0);
     $('projSummary').textContent = `${PROJ.groups.length} group${PROJ.groups.length===1?'':'s'} · ${Object.keys(DEFS).length} item types · ${ITEMS.length} pieces · ${lb(tw)}` + (PROJ.notes ? ` · ${PROJ.notes}` : '');
   } else $('projSummary').textContent = '';
-  ['pmRename','pmDup','pmExport','pmDelete'].forEach(id => $(id).disabled = !PROJ);
+  ['pmRename','pmDup','pmExport','pmDelete'].forEach(id => { const el = $(id); if(el) el.disabled = !PROJ; });
+  if(store?.readOnly) ['pmRename','pmDup','pmImport','pmDelete'].forEach(id => { const el = $(id); if(el) el.hidden = true; });
 }
 function renderPanels(){
   renderProjectBar();
@@ -848,7 +871,7 @@ async function openProject(id){
   try { localStorage.setItem('palletizer.last', id); } catch {}
   try { if(location.hash !== '#' + id) history.replaceState(null, '', '#' + id); } catch {}
   view.sel = null; view.step = null; view.group = 'all';
-  if(projList.find(x => x.id === id)?._file){ await refreshList(); }
+  if(projList.find(x => x.id === id)?._file && !store.readOnly){ await refreshList(); }
   deriveModel(); renderDims(); build(); frameAll(true);
 }
 function deriveEmpty(){ DEFS = {}; ITEMS = []; GROUPS = {}; }
@@ -1002,7 +1025,7 @@ resize();
 $('empty').hidden = false; $('empty').innerHTML = '<div>Loading projects…</div>';
 (async () => {
   store = await getStore();
-  $('storeNote').textContent = store.kind === 'db' ? '' : 'saved in this browser';
+  $('storeNote').textContent = store.kind === 'db' ? '' : store.readOnly ? 'view only' : 'saved in this browser';
   await refreshList();
   let want = location.hash.slice(1);
   if(!projList.some(p => p.id === want)){ try { want = localStorage.getItem('palletizer.last'); } catch { want = null; } }
