@@ -51,3 +51,12 @@ tools/geometry/            scripts that derived the arches project from its Rhin
 ```
 
 Edit `src/`, then run `python3 tools/build.py`.
+
+## Sharing for review
+
+Two links are kept on purpose:
+
+- **Workspace** (Palletizer) — the owner's editing copy; saves to its database and so requires a Claude sign-in.
+- **Review link** — https://claude.ai/artifact/MRco3g58NuxaYVAp3tFCy4 — a public, capability-free copy that anyone can open without an account. Changes reviewers make stay in their own browser only.
+
+See `CLAUDE.md` for how the review copy is refreshed.
