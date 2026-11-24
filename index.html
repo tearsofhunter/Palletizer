@@ -183,7 +183,7 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
   <section class="card">
     <p class="label" style="margin-bottom:4px">Packing tolerance</p>
     <div class="row"><label for="clear">Space on each side of a piece</label><output id="clearOut" class="mono" for="clear">⅛"</output></div>
-    <input id="clear" type="range" min="0" max="1" step="0.0625" value="0.125" style="width:100%">
+    <input id="clear" type="range" min="0" max="1" step="0.03125" value="0.125" style="width:100%">
     <p class="label" style="margin:10px 0 6px">Comb teeth between slots</p>
     <div class="seg" role="group" aria-label="Comb teeth">
       <button id="toothT" aria-pressed="true"><b>⅜" UHMW</b><span>tight</span></button>
@@ -449,11 +449,11 @@ const veh = () => { if(!SH().veh) SH().veh = vehDefaults(SH().vehicle); return S
 // =====================================================================================
 // Formatting
 // =====================================================================================
-function frac(v){
+function frac(v, D=16){
   const neg = v < 0; v = Math.abs(v);
-  const n = Math.round(v*16), whole = Math.floor(n/16), r = n % 16;
+  const n = Math.round(v*D), whole = Math.floor(n/D), r = n % D;
   if(!r) return `${neg?'-':''}${whole}"`;
-  let num = r, den = 16; while(num % 2 === 0){ num/=2; den/=2; }
+  let num = r, den = D; while(num % 2 === 0){ num/=2; den/=2; }
   const f = ({ '1/2':'½','1/4':'¼','3/4':'¾','1/8':'⅛','3/8':'⅜','5/8':'⅝','7/8':'⅞' })[`${num}/${den}`];
   return `${neg?'-':''}${whole ? whole : ''}${f ? f : (whole ? '-' : '') + num + '/' + den}"`;
 }
@@ -975,7 +975,7 @@ function tiles(){
   html += `<div><b>${b0 ? b0.estSlots : '–'}</b><span>slots per ${SH().mode==='P'?'pallet':'truck'}</span></div>`;
   if(SH().mode === 'P'){ const nt = PLAN.bays.filter(b=>b.tall).length; html += `<div><b>${PLAN.bays.length}</b><span>pallets${nt ? ` (${nt} tall)` : ''}</span></div>`; }
   else html += `<div><b>${b0 ? b0.used : 0}</b><span>slots used</span></div>`;
-  $('tiles').innerHTML = html; $('clearOut').textContent = frac(S().tol);
+  $('tiles').innerHTML = html; $('clearOut').textContent = frac(S().tol, 32);
   $('clear').value = S().tol;
   $('toothT').setAttribute('aria-pressed', S().tooth === 0.375); $('toothS').setAttribute('aria-pressed', S().tooth === 0.5);
 }
@@ -1143,7 +1143,7 @@ function showSel(it){
   if(!it || !PLAN){ $('selTitle').textContent = 'Click any piece'; $('selHint').hidden = false; dl.hidden = true; mb.hidden = true; return; }
   const d = describe(it);
   $('selTitle').textContent = `${it.id} · ${d.name}${d.desc ? ' · ' + d.desc : ''}`; $('selHint').hidden = true; dl.hidden = false; mb.hidden = false;
-  dl.innerHTML = `<dt>Group</dt><dd>${esc(d.group)}</dd><dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb.toFixed(1)} lb</dd><dt>Tolerance</dt><dd>${frac(S().tol)} each face</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
+  dl.innerHTML = `<dt>Group</dt><dd>${esc(d.group)}</dd><dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb.toFixed(1)} lb</dd><dt>Tolerance</dt><dd>${frac(S().tol, 32)} each face</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
   $('moveBay').innerHTML = PLAN.bays.map((b,i) => `<option value="${i}">${b.label}</option>`).join('');
   $('moveBay').value = Math.max(0, it.bay); $('moveSlot').value = it.slot + 1;
   $('moveMsg').textContent = '';
