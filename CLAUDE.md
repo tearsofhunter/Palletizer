@@ -15,6 +15,15 @@ link preview turns into the Claude logo instead of a screenshot. The review copy
 stay capability-free. The app detects this automatically and runs in LocalStore mode
 (bundled `projects/*.json` + the viewer's own localStorage; export uses a Blob link).
 
+## Plan of record (Nov 24 2026)
+`projects/aluminum-arches-v3.json`, "Aluminum arches: PLAN OF RECORD", is the design we're building:
+- all legs 77⅝" with 2 rungs (40 identical)
+- D halves = E tops (48 identical; D is 90⅜" tall with a flat-stock base)
+- A/B/C curved sections divided into equal thirds, with 2 rungs each set square to the curve
+- packed with no packing material and a ³⁄₃₂" gap: 2 tall pallets, high-cube container.
+
+The other two projects are kept for comparison and are marked superseded.
+
 ## Refreshing the review copy
 1. `db_get` the workspace (`799a…`) at `projects/<id>` and, if it has `edits`/`moves`/
    settings/group changes, merge them into `projects/<id>.json` here.

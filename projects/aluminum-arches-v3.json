@@ -2,13 +2,13 @@
  "format": "palletizer-project",
  "version": 1,
  "id": "aluminum-arches-v3",
- "name": "Aluminum arches: equal legs + thirds rungs",
+ "name": "Aluminum arches: PLAN OF RECORD (equal legs + thirds rungs)",
  "notes": "All legs 77\u215d\" w/ 2 rungs (40 identical) \u00b7 D halves = E tops (48 identical) \u00b7 A/B/C curved sections divided in equal thirds (2 rungs each, square to the curve)",
  "source": "alium_arches_for_claude.3dm",
  "created": "2026-11-24T04:25:00Z",
  "updated": "2026-11-24T04:25:00Z",
  "settings": {
-  "tol": 0.125,
+  "tol": 0.09375,
   "tooth": 0,
   "pallet": {
    "L": 48,
