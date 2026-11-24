@@ -182,12 +182,13 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
 
   <section class="card">
     <p class="label" style="margin-bottom:4px">Packing tolerance</p>
-    <div class="row"><label for="clear">Space on each side of a piece</label><output id="clearOut" class="mono" for="clear">⅛"</output></div>
+    <div class="row"><label for="clear" id="clearLbl">Space on each side of a piece</label><output id="clearOut" class="mono" for="clear">⅛"</output></div>
     <input id="clear" type="range" min="0" max="1" step="0.03125" value="0.125" style="width:100%">
-    <p class="label" style="margin:10px 0 6px">Comb teeth between slots</p>
+    <p class="label" style="margin:10px 0 6px">Packing material between slots</p>
     <div class="seg" role="group" aria-label="Comb teeth">
-      <button id="toothT" aria-pressed="true"><b>⅜" UHMW</b><span>tight</span></button>
-      <button id="toothS" aria-pressed="false"><b>½" plywood</b><span>standard</span></button>
+      <button id="toothT" aria-pressed="true"><b>⅜" UHMW</b><span>comb teeth</span></button>
+      <button id="toothS" aria-pressed="false"><b>½" plywood</b><span>comb teeth</span></button>
+      <button id="toothN" aria-pressed="false"><b>None</b><span>pieces only</span></button>
     </div>
     <div class="tiles" id="tiles"></div>
   </section>

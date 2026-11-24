@@ -201,7 +201,8 @@ function xform(type, o){
 // between slots. Items line up along each slot, separated by spacer blocks.
 // =====================================================================================
 const SPACER = 1.75, POST = 1.5;
-function geomBase(){ const c = S().tol; return { c, tooth:S().tooth, gap:SPACER + 2*c }; }
+const bare = () => S().tooth === 0;   // "no packing material": tolerance = gap between neighbouring pieces
+function geomBase(){ const t = S().tol; return bare() ? { c:t/2, tooth:0, gap:t, bare:true } : { c:t, tooth:S().tooth, gap:SPACER + 2*t }; }
 function palletDims(){ const p = PS(); return { len:p.L, dep:p.W, rackIn:p.L - 2*POST, depthIn:p.W - 2*POST,
   stdClear: p.maxH - p.deckStd - 0.75 - 0.25 - 1.5 }; }
 function itemW(type, bay){ return orient(type, bay.clearH).w; }
@@ -277,6 +278,18 @@ function packPallets(template, moves){
   });
   return { bays, rejected, left, tallTop, tallOK };
 }
+// Tall racks have more clear height, so most pieces stand more upright in them and more fit per slot.
+// Try starting with 0…n tall racks and keep the plan with the fewest pallets (then fewest tall ones).
+function bestPallets(){
+  const first = packPallets(null, null); if(!first.tallOK) return first;
+  let best = first;
+  for(let k = 1; k <= first.bays.length; k++){
+    const r = packPallets(Array(k).fill(true), null); r.bays = r.bays.filter(b => b.slots.length);
+    const nt = x => x.bays.filter(b => b.tall).length;
+    if(r.left.length <= best.left.length && (r.bays.length < best.bays.length || (r.bays.length === best.bays.length && nt(r) < nt(best)))) best = r;
+  }
+  return best;
+}
 function makeTruckBay(G){
   const v = veh(), c = G.c;
   const clearH = v.H - 1.5 - 1.0 - 0.5;
@@ -314,7 +327,7 @@ let PLAN = null;
 function makePlan(){
   let res;
   if(SH().mode === 'P'){
-    const first = packPallets(null, null), moves = SH().moves.P;
+    const first = bestPallets(), moves = SH().moves.P;
     res = Object.keys(moves).length ? packPallets(first.bays.map(b => b.tall), moves) : first;
   } else res = packTruck(SH().moves.T);
   res.rejected.forEach(uid => delete SH().moves[SH().mode][uid]);
@@ -519,7 +532,7 @@ function addItem(parent, it, bay, base, zp, sw, capTop, flip){
     const m = new THREE.Mesh(geo, pieceMat(it.type, k)); m.userData.kind = k; m.userData.it = it; body.add(m); pickables.push(m);
     if(view.velc && c > 0){ const v = new THREE.Mesh(geo, VELC); v.scale.z = (d.t + 2*c)/d.t; v.position.z = -c; v.userData.sup = it; v.renderOrder = 2; body.add(v); }
   });
-  if(view.sup){
+  if(view.sup && !bay.geom.bare){
     if(G.rib){ const r = new THREE.Mesh(G.rib, RIB); r.position.z = d.t*0.125; r.userData.sup = it; body.add(r); }
     else { const f = box(G.pocket[1]-G.pocket[0]+2, 2.5, sw, FOAM, G.pocket[0]-1, 0, -c, body); f.userData.sup = it; }
     const ch = capTop - base - (o.h - 1.5);
@@ -680,13 +693,14 @@ function stepText(){
 function tiles(){
   const G = geomBase(), b0 = PLAN.bays[0];
   const ts = [...new Set(Object.values(DEFS).map(d => d.t))]; const tMain = ts.length === 1 ? ts[0] : 1;
-  let html = `<div><b>${frac(tMain + 2*G.c)}</b><span>slot${ts.length>1?' (1" item)':''}</span></div><div><b>${frac(tMain + 2*G.c + G.tooth)}</b><span>pitch</span></div>`;
+  let html = `<div><b>${frac(tMain + 2*G.c, 32)}</b><span>slot${ts.length>1?' (1" item)':''}</span></div><div><b>${frac(tMain + 2*G.c + G.tooth, 32)}</b><span>pitch</span></div>`;
   html += `<div><b>${b0 ? b0.estSlots : '–'}</b><span>slots per ${SH().mode==='P'?'pallet':'truck'}</span></div>`;
   if(SH().mode === 'P'){ const nt = PLAN.bays.filter(b=>b.tall).length; html += `<div><b>${PLAN.bays.length}</b><span>pallets${nt ? ` (${nt} tall)` : ''}</span></div>`; }
   else html += `<div><b>${b0 ? b0.used : 0}</b><span>slots used</span></div>`;
   $('tiles').innerHTML = html; $('clearOut').textContent = frac(S().tol, 32);
   $('clear').value = S().tol;
-  $('toothT').setAttribute('aria-pressed', S().tooth === 0.375); $('toothS').setAttribute('aria-pressed', S().tooth === 0.5);
+  $('toothT').setAttribute('aria-pressed', S().tooth === 0.375); $('toothS').setAttribute('aria-pressed', S().tooth === 0.5); $('toothN').setAttribute('aria-pressed', bare());
+  $('clearLbl').textContent = bare() ? 'Gap between neighboring pieces' : 'Space on each side of a piece';
 }
 function renderPallets(){
   const el = $('pals'); el.innerHTML = '';
@@ -720,7 +734,7 @@ function checkRow(ok, text, warn){ return `<li><span class="pill ${ok ? 'ok' : w
 function renderTruck(){
   const v = veh(), b = PLAN.bays[0];
   const loaded = b.lb, pct = Math.min(100, loaded / v.maxLoad * 100);
-  const pal = packPallets(null,null).bays; const tops = pal.map(p=>p.top); const tallest = Math.max(...tops), shortest = Math.min(...tops);
+  const pal = bestPallets().bays; const tops = pal.map(p=>p.top); const tallest = Math.max(...tops), shortest = Math.min(...tops);
   let h = '';
   h += checkRow(!PLAN.left.length, PLAN.left.length ? `<b>${PLAN.left.length} pieces don't fit</b> (${[...new Set(PLAN.left.map(i=>DEFS[i.type].name))].slice(0,6).map(esc).join(', ')}). They're shown beside the truck. Try a bigger truck or less tolerance.` : `All ${ITEMS.length} pieces fit in ${b.used} slots.`);
   h += checkRow(loaded <= v.maxLoad, `Payload ${lb(loaded)} against a ${lb(v.maxLoad)} max load. Racks and foam are extra.<div class="bar"><i style="width:${pct}%"></i></div>`);
@@ -767,7 +781,7 @@ function renderCost(){
   const c = SH().costs || {};
   ['costPallet','costRack','costTruck','costTruckRack'].forEach(id => { if(document.activeElement !== $(id)) $(id).value = c[id] ?? ''; });
   const cp = +c.costPallet||0, cr = +c.costRack||0, ct = +c.costTruck||0, ctr = +c.costTruckRack||0;
-  const nP = SH().mode === 'P' ? PLAN.bays.length : packPallets(null,null).bays.length;
+  const nP = SH().mode === 'P' ? PLAN.bays.length : bestPallets().bays.length;
   const parts = [];
   if(cp || cr) parts.push(`<b>Pallets:</b> ${nP} × ($${cp.toLocaleString()} + $${cr.toLocaleString()}) = <b>$${(nP*(cp+cr)).toLocaleString()}</b>`);
   if(ct || ctr) parts.push(`<b>Truck:</b> $${ct.toLocaleString()} + $${ctr.toLocaleString()} = <b>$${(ct+ctr).toLocaleString()}</b>`);
@@ -852,7 +866,7 @@ function showSel(it){
   if(!it || !PLAN){ $('selTitle').textContent = 'Click any piece'; $('selHint').hidden = false; dl.hidden = true; mb.hidden = true; return; }
   const d = describe(it);
   $('selTitle').textContent = `${it.id} · ${d.name}${d.desc ? ' · ' + d.desc : ''}`; $('selHint').hidden = true; dl.hidden = false; mb.hidden = false;
-  dl.innerHTML = `<dt>Group</dt><dd>${esc(d.group)}</dd><dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb.toFixed(1)} lb</dd><dt>Tolerance</dt><dd>${frac(S().tol, 32)} each face</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
+  dl.innerHTML = `<dt>Group</dt><dd>${esc(d.group)}</dd><dt>Size</dt><dd>${d.size}</dd><dt>Weight</dt><dd>≈${d.lb.toFixed(1)} lb</dd><dt>Tolerance</dt><dd>${frac(S().tol, 32)} ${bare() ? "gap to neighbors" : "each face"}</dd><dt>Location</dt><dd>${where(it)}</dd><dt>Load step</dt><dd>${it.step} of ${PLAN.seq.length}</dd>`;
   $('moveBay').innerHTML = PLAN.bays.map((b,i) => `<option value="${i}">${b.label}</option>`).join('');
   $('moveBay').value = Math.max(0, it.bay); $('moveSlot').value = it.slot + 1;
   $('moveMsg').textContent = '';
@@ -977,7 +991,7 @@ $('tabPack').onclick = () => setTab('pack'); $('tabItems').onclick = () => setTa
 function setMode(m){ if(!PROJ) return; SH().mode = m; view.sel = null; view.step = null; scheduleSave(); build(); frameAll(true); }
 $('modeP').onclick = () => setMode('P'); $('modeT').onclick = () => setMode('T');
 function setTooth(v){ if(!PROJ) return; S().tooth = v; SH().moves = { P:{}, T:{} }; scheduleSave(); rebuildKeep(); }
-$('toothT').onclick = () => setTooth(0.375); $('toothS').onclick = () => setTooth(0.5);
+$('toothT').onclick = () => setTooth(0.375); $('toothS').onclick = () => setTooth(0.5); $('toothN').onclick = () => setTooth(0);
 $('clear').oninput = e => { if(!PROJ) return; S().tol = +e.target.value; SH().moves = { P:{}, T:{} }; scheduleSave(); rebuildKeep(); };
 $('vehicle').innerHTML = Object.entries(VEHICLES).map(([k,v]) => `<option value="${k}">${v.name}</option>`).join('');
 $('vehicle').onchange = e => { SH().vehicle = e.target.value; SH().veh = vehDefaults(e.target.value); SH().moves.T = {}; scheduleSave(); renderDims(); view.step = null; build(); frameAll(); };

@@ -9,7 +9,7 @@
  "updated": "2026-11-24T04:25:00Z",
  "settings": {
   "tol": 0.125,
-  "tooth": 0.375,
+  "tooth": 0,
   "pallet": {
    "L": 48,
    "W": 40,
