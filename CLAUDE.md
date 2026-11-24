@@ -17,7 +17,7 @@ stay capability-free. The app detects this automatically and runs in LocalStore 
 
 ## Plan of record (Nov 24 2026)
 `projects/aluminum-arches-v3.json`, "Aluminum arches: PLAN OF RECORD", is the design we're building:
-- all legs 77⅝" with 2 rungs (40 identical)
+- all legs 77⅝" with 2 rungs (44 identical)
 - D halves = E tops (48 identical; D is 90⅜" tall with a flat-stock base)
 - A/B/C curved sections divided into equal thirds, with 2 rungs each set square to the curve
 - packed with no packing material and a ³⁄₃₂" gap: 2 tall pallets, high-cube container.
